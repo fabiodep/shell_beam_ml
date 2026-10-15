@@ -9,7 +9,7 @@ import numpy as np
 from pathlib import Path
 
 from utils import load_checkpoint
-from model import state_trajectory_vmap, phi_z_net_vmap, phi_z_net_complex_vmap, phi_z_net_composed_vmap
+from model import state_trajectory_vmap, phi_func_vmap
 
 sigma_y = 250.0
 E = 200e3
@@ -30,7 +30,7 @@ X_flat = X.reshape(-1, 1)
 Y_flat = Y.reshape(-1, 1)
 states_flat = jnp.hstack([X_flat, Y_flat])
 
-phi_z_flat = 1 + phi_z_net_vmap(config, train_state.params.yield_func, states_flat, states_flat, train_state.norm)
+phi_z_flat = phi_func_vmap(config, train_state.params.yield_func, states_flat, states_flat, train_state.norm)
 
 with h5py.File(model_path / "yield_func.h5", "w") as f:
     f.create_dataset("eps", data=np.asarray(X_flat.flatten()))

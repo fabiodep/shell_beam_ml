@@ -8,6 +8,8 @@ from typing import Optional, Tuple, get_args, get_origin, get_type_hints
 @jax.tree_util.register_static
 @dataclass(kw_only=True, frozen=True)
 class Config:
+    system: str = "beam" #["beam", "shell"]
+
     # Utlilities
     save_folder: Optional[str] = None
     data_folder: str = "data"
@@ -25,9 +27,8 @@ class Config:
     A: float = b * h
     I: float = b * h**3 / 12
     E: float = 200e3
-    H_iso: float = E / 2
     sigma_y: float = 250.0
-    norm_state: Tuple[float, float] = (sigma_y / E, h * sigma_y / E)
+    norm_state: Tuple[float, float] = (sigma_y / E, sigma_y / E)
     N_y: float = sigma_y * A
     M_y: float = sigma_y * (b * h**2 / 6)
 
@@ -92,6 +93,7 @@ class Config:
     input_yield: bool = True
     yield_func_type: str = "single" #["single", "complex", "asymp", "composed"]
     diagonal_R: bool = True
+    symmetric: bool = True
     features: bool = False
     features_type: str = "mixed" #["atan", "rs", "mixed"]
     symmetry_abs: bool = False
@@ -107,7 +109,7 @@ class Config:
         for name in ("num_epochs", "batch_size", "eval_interval", "save_interval", "lr_decay_steps", "prefetch_batches"):
             if getattr(self, name) < 1:
                 raise ValueError(f"{name} must be positive")
-        save_folder = f"models/beam_{self.solver}"
+        save_folder = f"models/{self.system}_{self.solver}"
         if self.direction_loss:
             save_folder += "_direction"
         else:
@@ -137,21 +139,29 @@ class Config:
             save_folder += "_input_yield"
         if not self.diagonal_R:
             save_folder += "_full"
+        if not self.symmetric:
+            save_folder += "_asym"
         if self.features:
             save_folder += f"_{self.features_type}"
         if self.yield_params_dumping:
             save_folder += f"_dmp{self.yield_params_dumping_factor}"
         set_default("save_folder", save_folder)
         
-        if self.solver == "implicit_euler":
+        if self.system == "beam":
             latent_dim = 2
-        elif self.solver == "explicit_euler":
-            latent_dim = 3
+        elif self.system == "shell":
+            latent_dim = 6
         set_default("latent_dim", latent_dim)
         latent_dim = self.latent_dim
 
-        if self.diagonal_R:
+        if self.diagonal_R and self.system == "beam":
             R_matrix_shape = (2 * latent_dim, 64, 64, latent_dim)
+        elif self.diagonal_R and self.system == "shell":
+            dim = latent_dim // 2
+            if self.symmetric: 
+                R_matrix_shape = (8, 64, 64, dim * (dim + 1))
+            else:
+                R_matrix_shape = (2 * latent_dim, 64, 64, dim * (dim + 1))
         else:
             R_matrix_shape = (2 * latent_dim, 64, 64, latent_dim * (latent_dim + 1) // 2)
         set_default("R_matrix_shape", R_matrix_shape)
@@ -159,24 +169,34 @@ class Config:
         J_matrix_shape = (2 * latent_dim, 64, 64, (latent_dim-1) * latent_dim // 2)
         set_default("J_matrix_shape", J_matrix_shape)
 
-        if self.features:
-            if self.features_type == "mixed":
-                input_yield = 3 * latent_dim
+        if self.system == "beam":
+            if self.features:
+                if self.features_type == "mixed":
+                    input_yield = 3 * latent_dim
+                else:
+                    input_yield = 3 * latent_dim
             else:
-                input_yield = 3 * latent_dim
-        else:
-            input_yield = latent_dim
+                input_yield = latent_dim
 
-        if self.yield_func_type != "composed":
-            yield_func_states_shape = (input_yield, 32, 32, 32, 1)
-            set_default("yield_func_states_shape", yield_func_states_shape)
+            if self.yield_func_type != "composed":
+                yield_func_states_shape = (input_yield, 32, 32, 32, 1)
+                set_default("yield_func_states_shape", yield_func_states_shape)
+            else:
+                yield_func_smooth_shape = (input_yield, 32, 32, 32, 1)
+                yield_func_pos_shape = (input_yield, 32, 32, 32, 1)
+                yield_func_strength_shape = (input_yield, 32, 32, 32, 1)
+                set_default("yield_func_smooth_shape", yield_func_smooth_shape)
+                set_default("yield_func_pos_shape", yield_func_pos_shape)
+                set_default("yield_func_strength_shape", yield_func_strength_shape)
+        elif self.system == "shell":
+            if self.symmetric and self.input_yield:
+                input_yield = 4
+            elif self.symmetric and not self.input_yield:
+                input_yield = 2
+            elif not self.symmetric:
+                input_yield = self.latent_dim
         else:
-            yield_func_smooth_shape = (input_yield, 32, 32, 32, 1)
-            yield_func_pos_shape = (input_yield, 32, 32, 32, 1)
-            yield_func_strength_shape = (input_yield, 32, 32, 32, 1)
-            set_default("yield_func_smooth_shape", yield_func_smooth_shape)
-            set_default("yield_func_pos_shape", yield_func_pos_shape)
-            set_default("yield_func_strength_shape", yield_func_strength_shape)
+            raise ValueError(f"Unknown configuration: system={self.system}, symmetric={self.symmetric}")
 
         # Normalize sequence inputs so the frozen configuration stays hashable.
         type_hints = get_type_hints(type(self))

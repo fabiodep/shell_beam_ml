@@ -204,9 +204,7 @@ def train_loop_yield_func(
         yield_func_losses = list(checkpoint.get("yield_func_losses", ()))
         state_func_losses = list(checkpoint.get("state_func_losses", ()))
         mean_train_L2_errors = list(checkpoint.get("mean_train_L2_errors", ()))
-        mean_train_rel_L2_errors = list(checkpoint.get("mean_train_rel_L2_errors", ()))
         mean_val_L2_errors = list(checkpoint.get("mean_val_L2_errors", ()))
-        mean_val_rel_L2_errors = list(checkpoint.get("mean_val_rel_L2_errors", ()))
         train_yield_func_MSE = list(checkpoint.get("train_yield_func_MSE", ()))
         val_yield_func_MSE = list(checkpoint.get("val_yield_func_MSE", ()))
         evaluation_epochs = list(checkpoint.get("evaluation_epochs", ()))
@@ -221,9 +219,7 @@ def train_loop_yield_func(
         yield_func_losses = []
         state_func_losses = []
         mean_train_L2_errors = []
-        mean_train_rel_L2_errors = []
         mean_val_L2_errors = []
-        mean_val_rel_L2_errors = []
         train_yield_func_MSE = []
         val_yield_func_MSE = []
         evaluation_epochs = []
@@ -280,9 +276,7 @@ def train_loop_yield_func(
                 yield_func_losses = yield_func_losses,
                 state_func_losses = state_func_losses,
                 mean_train_L2_errors = mean_train_L2_errors,
-                mean_train_rel_L2_errors = mean_train_rel_L2_errors,
                 mean_val_L2_errors = mean_val_L2_errors,
-                mean_val_rel_L2_errors = mean_val_rel_L2_errors,
                 train_yield_func_MSE = train_yield_func_MSE,
                 val_yield_func_MSE = val_yield_func_MSE,
                 evaluation_epochs = evaluation_epochs
@@ -298,9 +292,7 @@ def train_loop_yield_func(
                 yield_func_losses = yield_func_losses,
                 state_func_losses = state_func_losses,
                 mean_train_L2_errors = mean_train_L2_errors,
-                mean_train_rel_L2_errors = mean_train_rel_L2_errors,
                 mean_val_L2_errors = mean_val_L2_errors,
-                mean_val_rel_L2_errors = mean_val_rel_L2_errors,
                 train_yield_func_MSE = train_yield_func_MSE,
                 val_yield_func_MSE = val_yield_func_MSE,
                 evaluation_epochs = evaluation_epochs
@@ -334,9 +326,7 @@ def train_loop_state_func(
         train_yield_func_MSE = list(checkpoint.get("train_yield_func_MSE", ()))
         val_yield_func_MSE = list(checkpoint.get("val_yield_func_MSE", ()))
         mean_train_L2_errors = list(checkpoint.get("mean_train_L2_errors", ()))
-        mean_train_rel_L2_errors = list(checkpoint.get("mean_train_rel_L2_errors", ()))
         mean_val_L2_errors = list(checkpoint.get("mean_val_L2_errors", ()))
-        mean_val_rel_L2_errors = list(checkpoint.get("mean_val_rel_L2_errors", ()))
         evaluation_epochs = list(checkpoint.get("evaluation_epochs", ()))
         print(f"Resuming from {resume_from} after epoch {start_epoch-1} ...")
     else:
@@ -350,9 +340,7 @@ def train_loop_state_func(
         train_yield_func_MSE = list(checkpoint.get("train_yield_func_MSE", ()))
         val_yield_func_MSE = list(checkpoint.get("val_yield_func_MSE", ()))
         mean_train_L2_errors = []
-        mean_train_rel_L2_errors = []
         mean_val_L2_errors = []
-        mean_val_rel_L2_errors = []
         evaluation_epochs = []
 
     train_dataset = load_dataset(config, "train")
@@ -380,31 +368,27 @@ def train_loop_state_func(
         evaluate_epoch = epoch == 0 or epoch == config.num_epochs - 1
         evaluate_epoch |= epoch % config.eval_interval == 0
         if evaluate_epoch:
-            train_L2_errors, train_rel_L2_errors, train_forces, train_targets, train_angles = eval_state_func_fn(config,
-                                                                                                                 train_state.params,
-                                                                                                                 train_dataset,
-                                                                                                                 train_state.norm)
-            val_L2_errors, val_rel_L2_errors, val_forces, val_targets, val_angles = eval_state_func_fn(config,
-                                                                                                       train_state.params,
-                                                                                                       val_dataset,
-                                                                                                       train_state.norm)
+            train_L2_errors, train_forces, train_targets, train_angles = eval_state_func_fn(config,
+                                                                                            train_state.params,
+                                                                                            train_dataset,
+                                                                                            train_state.norm)
+            val_L2_errors, val_forces, val_targets, val_angles = eval_state_func_fn(config,
+                                                                                    train_state.params,
+                                                                                    val_dataset,
+                                                                                    train_state.norm)
 
             evaluation_epochs.append(epoch)
             mean_train_L2_errors.append(float(jnp.mean(train_L2_errors)))
-            mean_train_rel_L2_errors.append(float(jnp.mean(train_rel_L2_errors)))
             mean_val_L2_errors.append(float(jnp.mean(val_L2_errors)))
-            mean_val_rel_L2_errors.append(float(jnp.mean(val_rel_L2_errors)))
 
             save_history_plots(config, 
                                state_func_losses, 
                                evaluation_epochs, 
                                mean_train_L2_errors,
-                               mean_train_rel_L2_errors,
-                               mean_val_L2_errors,
-                               mean_val_rel_L2_errors)
+                               mean_val_L2_errors)
 
-            save_loads_plots(config, epoch, "train", train_L2_errors, train_rel_L2_errors, train_forces, train_targets, train_angles)
-            save_loads_plots(config, epoch, "val", val_L2_errors, val_rel_L2_errors, val_forces, val_targets, val_angles)
+            save_loads_plots(config, epoch, "train", train_L2_errors, train_forces, train_targets, train_angles)
+            save_loads_plots(config, epoch, "val", val_L2_errors, val_forces, val_targets, val_angles)
 
         save_epoch = epoch == 0 or epoch % config.save_interval == 0
         if save_epoch:
@@ -418,9 +402,7 @@ def train_loop_state_func(
                 yield_func_losses = yield_func_losses,
                 state_func_losses = state_func_losses,
                 mean_train_L2_errors = mean_train_L2_errors,
-                mean_train_rel_L2_errors = mean_train_rel_L2_errors,
                 mean_val_L2_errors = mean_val_L2_errors,
-                mean_val_rel_L2_errors = mean_val_rel_L2_errors,
                 train_yield_func_MSE = train_yield_func_MSE,
                 val_yield_func_MSE = val_yield_func_MSE,
                 evaluation_epochs = evaluation_epochs
@@ -436,9 +418,7 @@ def train_loop_state_func(
                 yield_func_losses = yield_func_losses,
                 state_func_losses = state_func_losses,
                 mean_train_L2_errors = mean_train_L2_errors,
-                mean_train_rel_L2_errors = mean_train_rel_L2_errors,
                 mean_val_L2_errors = mean_val_L2_errors,
-                mean_val_rel_L2_errors = mean_val_rel_L2_errors,
                 train_yield_func_MSE = train_yield_func_MSE,
                 val_yield_func_MSE = val_yield_func_MSE,
                 evaluation_epochs = evaluation_epochs
@@ -468,9 +448,7 @@ def train_loop(
         start_epoch = int(checkpoint["epoch"]) + 1
         state_func_losses = list(checkpoint.get("state_func_losses", ()))
         mean_train_L2_errors = list(checkpoint.get("mean_train_L2_errors", ()))
-        mean_train_rel_L2_errors = list(checkpoint.get("mean_train_rel_L2_errors", ()))
         mean_val_L2_errors = list(checkpoint.get("mean_val_L2_errors", ()))
-        mean_val_rel_L2_errors = list(checkpoint.get("mean_val_rel_L2_errors", ()))
         evaluation_epochs = list(checkpoint.get("evaluation_epochs", ()))
         if config.pretraining:
             yield_func_losses = list(checkpoint.get("yield_func_losses", ()))
@@ -489,9 +467,7 @@ def train_loop(
             train_yield_func_MSE = list(checkpoint.get("train_yield_func_MSE", ()))
             val_yield_func_MSE = list(checkpoint.get("val_yield_func_MSE", ()))
             mean_train_L2_errors = []
-            mean_train_rel_L2_errors = []
             mean_val_L2_errors = []
-            mean_val_rel_L2_errors = []
             evaluation_epochs = []
         else:
             start_epoch = 0
@@ -499,9 +475,7 @@ def train_loop(
             step = jax.device_put(jnp.array(0))
             state_func_losses = []
             mean_train_L2_errors = []
-            mean_train_rel_L2_errors = []
             mean_val_L2_errors = []
-            mean_val_rel_L2_errors = []
             evaluation_epochs = []
 
     train_dataset = load_dataset(config, "train")
@@ -529,31 +503,27 @@ def train_loop(
         evaluate_epoch = epoch == 0 or epoch == config.num_epochs - 1
         evaluate_epoch |= epoch % config.eval_interval == 0
         if evaluate_epoch:
-            train_L2_errors, train_rel_L2_errors, train_forces, train_targets, train_angles = eval_state_func_fn(config,
-                                                                                                                 train_state.params,
-                                                                                                                 train_dataset,
-                                                                                                                 train_state.norm)
-            val_L2_errors, val_rel_L2_errors, val_forces, val_targets, val_angles = eval_state_func_fn(config,
-                                                                                                       train_state.params,
-                                                                                                       val_dataset,
-                                                                                                       train_state.norm)
+            train_L2_errors, train_forces, train_targets, train_angles = eval_state_func_fn(config,
+                                                                                            train_state.params,
+                                                                                            train_dataset,
+                                                                                            train_state.norm)
+            val_L2_errors, val_forces, val_targets, val_angles = eval_state_func_fn(config,
+                                                                                    train_state.params,
+                                                                                    val_dataset,
+                                                                                    train_state.norm)
 
             evaluation_epochs.append(epoch)
             mean_train_L2_errors.append(float(jnp.mean(train_L2_errors)))
-            mean_train_rel_L2_errors.append(float(jnp.mean(train_rel_L2_errors)))
             mean_val_L2_errors.append(float(jnp.mean(val_L2_errors)))
-            mean_val_rel_L2_errors.append(float(jnp.mean(val_rel_L2_errors)))
 
             save_history_plots(config, 
                                state_func_losses, 
                                evaluation_epochs, 
                                mean_train_L2_errors,
-                               mean_train_rel_L2_errors,
-                               mean_val_L2_errors,
-                               mean_val_rel_L2_errors)
+                               mean_val_L2_errors,)
 
-            save_loads_plots(config, epoch, "train", train_L2_errors, train_rel_L2_errors, train_forces, train_targets, train_angles)
-            save_loads_plots(config, epoch, "val", val_L2_errors, val_rel_L2_errors, val_forces, val_targets, val_angles)
+            save_loads_plots(config, epoch, "train", train_L2_errors, train_forces, train_targets, train_angles)
+            save_loads_plots(config, epoch, "val", val_L2_errors, val_forces, val_targets, val_angles)
 
         save_epoch = epoch == 0 or epoch % config.save_interval == 0
         if save_epoch:
@@ -567,9 +537,7 @@ def train_loop(
                     yield_func_losses = yield_func_losses,
                     state_func_losses = state_func_losses,
                     mean_train_L2_errors = mean_train_L2_errors,
-                    mean_train_rel_L2_errors = mean_train_rel_L2_errors,
                     mean_val_L2_errors = mean_val_L2_errors,
-                    mean_val_rel_L2_errors = mean_val_rel_L2_errors,
                     train_yield_func_MSE = train_yield_func_MSE,
                     val_yield_func_MSE = val_yield_func_MSE,
                     evaluation_epochs = evaluation_epochs
@@ -583,9 +551,7 @@ def train_loop(
                     previous_params = previous_params,
                     state_func_losses = state_func_losses,
                     mean_train_L2_errors = mean_train_L2_errors,
-                    mean_train_rel_L2_errors = mean_train_rel_L2_errors,
                     mean_val_L2_errors = mean_val_L2_errors,
-                    mean_val_rel_L2_errors = mean_val_rel_L2_errors,
                     evaluation_epochs = evaluation_epochs
                 )
         if epoch == config.num_epochs - 1:
@@ -599,9 +565,7 @@ def train_loop(
                     yield_func_losses = yield_func_losses,
                     state_func_losses = state_func_losses,
                     mean_train_L2_errors = mean_train_L2_errors,
-                    mean_train_rel_L2_errors = mean_train_rel_L2_errors,
                     mean_val_L2_errors = mean_val_L2_errors,
-                    mean_val_rel_L2_errors = mean_val_rel_L2_errors,
                     train_yield_func_MSE = train_yield_func_MSE,
                     val_yield_func_MSE = val_yield_func_MSE,
                     evaluation_epochs = evaluation_epochs
@@ -616,9 +580,7 @@ def train_loop(
                     yield_func_losses = yield_func_losses,
                     state_func_losses = state_func_losses,
                     mean_train_L2_errors = mean_train_L2_errors,
-                    mean_train_rel_L2_errors = mean_train_rel_L2_errors,
                     mean_val_L2_errors = mean_val_L2_errors,
-                    mean_val_rel_L2_errors = mean_val_rel_L2_errors,
                     evaluation_epochs = evaluation_epochs
                 )
 
@@ -667,9 +629,7 @@ def save_history_plots(config,
                        losses, 
                        evaluation_epochs, 
                        mean_train_L2_errors,
-                       mean_train_rel_L2_errors,
-                       mean_val_L2_errors,
-                       mean_val_rel_L2_errors):
+                       mean_val_L2_errors):
     """
     Saves the training history plots for the state function.
     Args:
@@ -677,9 +637,7 @@ def save_history_plots(config,
         losses: list of training losses over epochs.
         evaluation_epochs: list of epochs at which evaluations were performed.
         mean_train_L2_errors: list of mean L2 errors on the training set over evaluation epochs.
-        mean_train_rel_L2_errors: list of mean relative L2 errors on the training set over evaluation epochs.
         mean_val_L2_errors: list of mean L2 errors on the validation set over evaluation epochs.
-        mean_val_rel_L2_errors: list of mean relative L2 errors on the validation set over evaluation epochs.
     """
 
     save_path = Path(config.save_folder)

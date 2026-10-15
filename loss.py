@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from jax import vmap
 from jax.tree_util import tree_leaves
 
-from model import states_trajectory, phi_z_net_vmap, phi_z_net_complex_vmap, phi_z_net_composed_vmap, state_dot_implicit_vmap
+from model import states_trajectory, phi_func_vmap, state_dot_implicit_vmap
 from utils import loading_inputs
 
 def loss_trajectory(config, params_R_matrix, params_yield_func, input_char, targets, states, norm):
@@ -24,16 +24,16 @@ def loss_trajectory(config, params_R_matrix, params_yield_func, input_char, targ
     inputs = loading_inputs(config, input_char, targets.shape[0]+1)
     trajectory = states_trajectory(config, params_R_matrix, params_yield_func, inputs[1:], norm)
     
-    forces = trajectory[:,config.latent_dim:config.latent_dim+2]
+    forces = trajectory[:,config.latent_dim:2*config.latent_dim]
     error = forces - targets
     if config.normalize_loss == "constant":
-        error = error.at[:, 0].set(error[:, 0] / config.N_y)
-        error = error.at[:, 1].set(error[:, 1] / config.M_y)
+        error = error.at[:, :(config.latent_dim//2)].set(error[:, :(config.latent_dim//2)] / config.N_y)
+        error = error.at[:, (config.latent_dim//2):].set(error[:, (config.latent_dim//2):] / config.M_y)
     elif config.normalize_loss == "max":
-        error = error.at[:, 0].set(error[:, 0] / jnp.max(jnp.abs(targets[:, 0])))
-        error = error.at[:, 1].set(error[:, 1] / jnp.max(jnp.abs(targets[:, 1])))
+        error = error.at[:, :(config.latent_dim//2)].set(error[:, :(config.latent_dim//2)] / jnp.max(jnp.abs(targets[:, :(config.latent_dim//2)])))
+        error = error.at[:, (config.latent_dim//2):].set(error[:, (config.latent_dim//2):] / jnp.max(jnp.abs(targets[:, (config.latent_dim//2):])))
     elif config.normalize_loss == "weight":
-        direction_differences = 1 + jnp.linalg.norm(jnp.abs(jnp.abs(jnp.concatenate([jnp.zeros((1, 2)), states[1:] - states[:-1]], axis=0)) - jnp.abs(inputs[1:, 2:])), axis=-1)
+        direction_differences = 1 + jnp.linalg.norm(jnp.abs(jnp.abs(jnp.concatenate([jnp.zeros((1, 2)), states[1:] - states[:-1]], axis=0)) - jnp.abs(inputs[1:, config.latent_dim:])), axis=-1)
         max_difference = jnp.max(direction_differences)
         weight = direction_differences / max_difference
 
@@ -48,7 +48,7 @@ def loss_trajectory(config, params_R_matrix, params_yield_func, input_char, targ
 
     if config.derivative_loss:
         target_directions = states[1:] - states[:-1]
-        predicted_directions = trajectory[1:, -1][:, None] * trajectory[1:, config.latent_dim+2:-1]
+        predicted_directions = trajectory[1:, -1][:, None] * trajectory[1:, 2*config.latent_dim:-1]
         zero_states_pos = jnp.isclose(jnp.linalg.norm(states, axis=-1), 0.0)
         target_directions = jnp.where(zero_states_pos[:-1, None], jnp.zeros_like(target_directions), target_directions)
         predicted_directions = jnp.where(zero_states_pos[:-1, None], jnp.zeros_like(predicted_directions), predicted_directions)
@@ -57,7 +57,7 @@ def loss_trajectory(config, params_R_matrix, params_yield_func, input_char, targ
         loss = loss + config.derivative_loss_weight * der_loss
 
     if config.peak_loss:
-        loss = loss + config.peak_loss_weight * (jnp.max(jnp.abs(error[:, 0])) + jnp.max(jnp.abs(error[:, 1])))
+        loss = loss + config.peak_loss_weight * (jnp.max(jnp.abs(error[:, :(config.latent_dim//2)])) + jnp.max(jnp.abs(error[:, (config.latent_dim//2):])))
 
     return loss
 
@@ -102,15 +102,7 @@ def loss_yield_func_fn(config, params_yield_func, states, inputs, targets_phi_z,
     Returns:
         The computed loss for the yield function.
     """
-    if config.yield_func_type == "single":
-        predicted_phi_z = phi_z_net_vmap(config, params_yield_func, states, inputs, norm)
-    elif config.yield_func_type == "complex":
-        predicted_phi_z = phi_z_net_complex_vmap(config, params_yield_func, states, inputs, norm)
-    elif config.yield_func_type == "composed":
-        predicted_phi_z = phi_z_net_composed_vmap(config, params_yield_func, states, inputs, norm)
-
-    if not config.yield_log_loss:
-        predicted_phi_z = 1 + predicted_phi_z
+    predicted_phi_z = phi_func_vmap(config, params_yield_func, states, inputs, norm)
 
     if config.reg_yield_func:
         l2_reg = sum(jnp.sum(param ** 2) for param in tree_leaves(params_yield_func))
@@ -118,7 +110,7 @@ def loss_yield_func_fn(config, params_yield_func, states, inputs, targets_phi_z,
         l2_reg = 0.0
 
     if config.yield_log_loss:
-        return jnp.mean(jnp.square(predicted_phi_z - jnp.log(targets_phi_z))) + config.l2_reg_weight * l2_reg
+        return jnp.mean(jnp.square(jnp.log(predicted_phi_z) - jnp.log(targets_phi_z))) + config.l2_reg_weight * l2_reg
     else:
         return jnp.mean(jnp.square(predicted_phi_z - targets_phi_z)) + config.l2_reg_weight * l2_reg
 

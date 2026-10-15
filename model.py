@@ -36,9 +36,22 @@ def R_matrix_block(config, params, inpt, activation):
         The computed R matrix block.
     """
     if config.diagonal_R:
-        R_matrix_ph = jnp.diag(fnn(params, inpt, activation).squeeze())
+        if config.system == "beam":
+            R_matrix_ph = jnp.diag(fnn(params, inpt, activation).squeeze())
+        elif config.system == "shell":
+            R_matrix_ph = jnp.zeros((config.latent_dim, config.latent_dim))
+            R_matrix_ph_1 = jnp.zeros((config.latent_dim//2, config.latent_dim//2))
+            R_matrix_ph_2 = jnp.zeros((config.latent_dim//2, config.latent_dim//2))
+            out = fnn(params, inpt, activation).squeeze()
+            pos = 0
+            for i in range(config.latent_dim//2):
+                R_matrix_ph_1 = R_matrix_ph_1.at[i, i:].set(out[pos:pos+(config.latent_dim//2-i)])
+                R_matrix_ph_2 = R_matrix_ph_2.at[i, i:].set(out[pos+config.latent_dim//2:pos+(config.latent_dim-i)])
+                pos += config.latent_dim//2 - i
+            R_matrix_ph[:config.latent_dim//2, :config.latent_dim//2] = R_matrix_ph_1
+            R_matrix_ph[config.latent_dim//2:, config.latent_dim//2:] = R_matrix_ph_2
     else:
-        R_matrix_ph = jnp.zeros((config.latent_dim, config.latent_dim))
+        R_matrix_ph = jnp.zeros((config.latent_dim, config.latent_dim))    
         R_matrix_entries = fnn(params, inpt, activation)
         pos = 0
         for i in range(config.latent_dim):
@@ -56,12 +69,37 @@ def R_matrix(config, params, inpt):
     Returns:
         The computed R matrix.
     """
-    R_matrix_ph_pp = R_matrix_block(config, params, inpt, leaky_relu) 
-    R_matrix_ph_mm = R_matrix_block(config, params, -1 * inpt, leaky_relu)
-    R_matrix_ph_pm = R_matrix_block(config, params, jnp.concatenate([inpt[0][None], -1 * inpt[1][None], inpt[2][None], -1 * inpt[3][None]]), leaky_relu)
-    R_matrix_ph_mp = R_matrix_block(config, params, jnp.concatenate([-1 * inpt[0][None], inpt[1][None], -1 * inpt[2][None], inpt[3][None]]), leaky_relu)
-    R_matrix_ph = (R_matrix_ph_pp + R_matrix_ph_mm + R_matrix_ph_pm + R_matrix_ph_mp) / 4
-    return R_matrix_ph
+    if config.system == "beam" and config.symmetric:
+        R_matrix_ph_pp = R_matrix_block(config, params, inpt, leaky_relu) 
+        R_matrix_ph_mm = R_matrix_block(config, params, -1 * inpt, leaky_relu)
+        R_matrix_ph_pm = R_matrix_block(config, params, jnp.concatenate([inpt[0][None], -1 * inpt[1][None], inpt[2][None], -1 * inpt[3][None]]), leaky_relu)
+        R_matrix_ph_mp = R_matrix_block(config, params, jnp.concatenate([-1 * inpt[0][None], inpt[1][None], -1 * inpt[2][None], inpt[3][None]]), leaky_relu)
+        R_matrix_ph = (R_matrix_ph_pp + R_matrix_ph_mm + R_matrix_ph_pm + R_matrix_ph_mp) / 4
+        return R_matrix_ph
+    elif config.system == "shell" and config.symmetric:
+        inpt_1 = jnp.sum(inpt[config.latent_dim:config.latent_dim+2])
+        inpt_2 = 2 * (inpt[config.latent_dim]**2 + inpt[config.latent_dim+1]**2 - inpt[config.latent_dim]*inpt[config.latent_dim+1]) / 3 - inpt[config.latent_dim+2]**2
+        inpt_3 = 2 * (inpt[0]**2 + inpt[1]**2 - inpt[0]*inpt[1]) / 3 - inpt[2]**2
+        inpt_4 = (2 * inpt[config.latent_dim]*inpt[0] + 2 * inpt[config.latent_dim+1]*inpt[1] - inpt[config.latent_dim]*inpt[1] - inpt[config.latent_dim+1]*inpt[0]) / 3 + inpt[2] * inpt[config.latent_dim+2]
+        inpt_5 = jnp.sum(inpt[config.latent_dim+3:config.latent_dim+5])
+        inpt_6 = 2 * (inpt[config.latent_dim+3]**2 + inpt[config.latent_dim+4]**2 - inpt[config.latent_dim+3]*inpt[config.latent_dim+4]) / 3 - inpt[config.latent_dim+5]**2
+        inpt_7 = 2 * (inpt[3]**2 + inpt[4]**2 - inpt[3]*inpt[4]) / 3 - inpt[5]**2
+        inpt_8 = (2 * inpt[config.latent_dim+3]*inpt[3] + 2 * inpt[config.latent_dim+4]*inpt[4] - inpt[config.latent_dim+3]*inpt[4] - inpt[config.latent_dim+4]*inpt[3]) / 3 + inpt[5] * inpt[config.latent_dim+5]
+
+        inpt_array_pp = jnp.array([inpt_1, inpt_2, inpt_3, inpt_4, inpt_5, inpt_6, inpt_7, inpt_8])
+        inpt_array_mm = jnp.array([-1 * inpt_1, inpt_2, inpt_3, inpt_4, -1 * inpt_5, inpt_6, inpt_7, inpt_8])
+        inpt_array_pm = jnp.array([inpt_1, inpt_2, inpt_3, inpt_4, -1 * inpt_5, inpt_6, inpt_7, inpt_8])
+        inpt_array_mp = jnp.array([-1 * inpt_1, inpt_2, inpt_3, inpt_4, inpt_5, inpt_6, inpt_7, inpt_8])
+
+        R_pp = R_matrix_block(config, params, inpt_array_pp, leaky_relu)
+        R_mm = R_matrix_block(config, params, inpt_array_mm, leaky_relu)
+        R_pm = R_matrix_block(config, params, inpt_array_pm, leaky_relu)
+        R_mp = R_matrix_block(config, params, inpt_array_mp, leaky_relu)
+        return (R_pp + R_mm + R_pm + R_mp) / 4
+    elif not config.symmetric:
+        return R_matrix_block(config, params, inpt, leaky_relu)
+    else:
+        raise ValueError(f"Unknown configuration: system={config.system}, symmetric={config.symmetric}")
 
 
 def J_matrix(config, params, inpt):
@@ -100,7 +138,7 @@ def non_smooth_cond(x):
     return cond(jnp.isclose(jnp.linalg.norm(x), 0.0), true, false)
 
 
-def phi_z_net_complex(config, params, states, input, norm):
+def phi_net_beam_complex(config, params, states, input, norm):
     """
     Computes the complex "hardening" function using a neural network.
     Args:
@@ -139,7 +177,7 @@ def phi_z_net_complex(config, params, states, input, norm):
         net_pm = relu(non_smooth_cond(normalized_states) * fnn(params.states, jnp.concatenate([normalized_inputs[0][None], -1 * normalized_inputs[1][None]]), leaky_relu).squeeze())
     return (net_pp + net_mp + net_mm + net_pm) / 4
 
-def phi_z_net(config, params, states, input, norm):
+def phi_net_beam(config, params, states, input, norm):
     """
     Computes the "hardening" function using a neural network.
     Args:
@@ -155,36 +193,40 @@ def phi_z_net(config, params, states, input, norm):
         normalized_states = input / norm
     else:
         normalized_states = states / norm
-    if config.symmetry_abs:
-        normalized_states = jnp.abs(normalized_states)
-        if config.root_square:
-            sqrt_normalized_states = jnp.sqrt(normalized_states)
-            net = relu(fnn(params.states, jnp.concatenate([normalized_states, sqrt_normalized_states]), leaky_relu).squeeze())
-            return net
-        else:
-            net = relu(fnn(params.states, normalized_states, leaky_relu).squeeze())
-            return net
-    else:
-        if config.features:
-            if config.features_type == "atan":
-                features = jnp.atan(jnp.abs(normalized_states))
-            elif config.features_type == "rs":
-                features = jnp.sqrt(jnp.abs(normalized_states))
-            elif config.features_type == "mixed":
-                features = jnp.concatenate([jnp.sqrt(jnp.abs(normalized_states)), jnp.arctan(jnp.abs(normalized_states))])
-            else:
-                raise ValueError(f"Unknown features_type: {config.features_type}")
 
-            net_pp = relu(fnn(params.states, jnp.concatenate([normalized_states, features]), leaky_relu).squeeze())
-            net_mp = relu(fnn(params.states, jnp.concatenate([-1 * normalized_states[0][None], normalized_states[1][None], features]), leaky_relu).squeeze())
-            net_mm = relu(fnn(params.states, jnp.concatenate([-1 * normalized_states, features]), leaky_relu).squeeze())
-            net_pm = relu(fnn(params.states, jnp.concatenate([normalized_states[0][None], -1 * normalized_states[1][None], features]), leaky_relu).squeeze())
+    if config.symmetric:
+        if config.symmetry_abs:
+            normalized_states = jnp.abs(normalized_states)
+            if config.root_square:
+                sqrt_normalized_states = jnp.sqrt(normalized_states)
+                net = relu(fnn(params.states, jnp.concatenate([normalized_states, sqrt_normalized_states]), leaky_relu).squeeze())
+                return net
+            else:
+                net = relu(fnn(params.states, normalized_states, leaky_relu).squeeze())
+                return net
         else:
-            net_pp = relu(fnn(params.states, normalized_states, leaky_relu).squeeze())
-            net_mp = relu(fnn(params.states, jnp.concatenate([-1 * normalized_states[0][None], normalized_states[1][None]]), leaky_relu).squeeze())
-            net_mm = relu(fnn(params.states, -1 * normalized_states, leaky_relu).squeeze())
-            net_pm = relu(fnn(params.states, jnp.concatenate([normalized_states[0][None], -1 * normalized_states[1][None]]), leaky_relu).squeeze())
-        return (net_pp + net_mp + net_mm + net_pm) / 4
+            if config.features:
+                if config.features_type == "atan":
+                    features = jnp.atan(jnp.abs(normalized_states))
+                elif config.features_type == "rs":
+                    features = jnp.sqrt(jnp.abs(normalized_states))
+                elif config.features_type == "mixed":
+                    features = jnp.concatenate([jnp.sqrt(jnp.abs(normalized_states)), jnp.arctan(jnp.abs(normalized_states))])
+                else:
+                    raise ValueError(f"Unknown features_type: {config.features_type}")
+
+                net_pp = relu(fnn(params.states, jnp.concatenate([normalized_states, features]), leaky_relu).squeeze())
+                net_mp = relu(fnn(params.states, jnp.concatenate([-1 * normalized_states[0][None], normalized_states[1][None], features]), leaky_relu).squeeze())
+                net_mm = relu(fnn(params.states, jnp.concatenate([-1 * normalized_states, features]), leaky_relu).squeeze())
+                net_pm = relu(fnn(params.states, jnp.concatenate([normalized_states[0][None], -1 * normalized_states[1][None], features]), leaky_relu).squeeze())
+            else:
+                net_pp = relu(fnn(params.states, normalized_states, leaky_relu).squeeze())
+                net_mp = relu(fnn(params.states, jnp.concatenate([-1 * normalized_states[0][None], normalized_states[1][None]]), leaky_relu).squeeze())
+                net_mm = relu(fnn(params.states, -1 * normalized_states, leaky_relu).squeeze())
+                net_pm = relu(fnn(params.states, jnp.concatenate([normalized_states[0][None], -1 * normalized_states[1][None]]), leaky_relu).squeeze())
+            return (net_pp + net_mp + net_mm + net_pm) / 4
+    else:
+        return relu(fnn(params.states, normalized_states, leaky_relu).squeeze())
 
 def asymptotic_value(input):
     """
@@ -214,7 +256,7 @@ def asymptotic_value(input):
 
     return N_asym + M_asym
 
-def phi_z_asym_block(config, params, net_inputs, r, asymptotic_value):
+def phi_asym_block(config, params, net_inputs, r, asymptotic_value):
     """ 
     Computes a block of the asymptotic "hardening" function using a neural network.
     Args:
@@ -230,7 +272,7 @@ def phi_z_asym_block(config, params, net_inputs, r, asymptotic_value):
     g = 1 - jnp.exp(-1 * r * a)
     return 1 - g * (asymptotic_value - 1)
 
-def phi_z_net_asym(config, params, states, input, norm):
+def phi_net_beam_asym(config, params, states, input, norm):
     """ 
     Computes the asymptotic "hardening" function using a neural network.
     Args:
@@ -245,10 +287,10 @@ def phi_z_net_asym(config, params, states, input, norm):
     normalized_states = states / norm
     r = jnp.linalg.norm(normalized_states)
     phi_z_asympt = asymptotic_value(input)
-    phi_z_pp = phi_z_asym_block(config, params, normalized_states, r, phi_z_asympt)
-    phi_z_mp = phi_z_asym_block(config, params, jnp.concatenate([-1 * normalized_states[0][None], normalized_states[1][None]]), r, phi_z_asympt)
-    phi_z_mm = phi_z_asym_block(config, params, -1 * normalized_states, r, phi_z_asympt)
-    phi_z_pm = phi_z_asym_block(config, params, jnp.concatenate([normalized_states[0][None], -1 * normalized_states[1][None]]), r, phi_z_asympt)
+    phi_z_pp = phi_asym_block(config, params, normalized_states, r, phi_z_asympt)
+    phi_z_mp = phi_asym_block(config, params, jnp.concatenate([-1 * normalized_states[0][None], normalized_states[1][None]]), r, phi_z_asympt)
+    phi_z_mm = phi_asym_block(config, params, -1 * normalized_states, r, phi_z_asympt)
+    phi_z_pm = phi_asym_block(config, params, jnp.concatenate([normalized_states[0][None], -1 * normalized_states[1][None]]), r, phi_z_asympt)
 
     #jax.debug.breakpoint(num_frames=1)
     return (phi_z_pp + phi_z_mp + phi_z_mm + phi_z_pm) / 4
@@ -264,7 +306,7 @@ def non_smooth_function(x):
     return 0.5 * (1 + jnp.sign(x) * (1 - jnp.exp(-1 * jnp.float_power(jnp.abs(x), 1.0 / 5))))
 
 
-def phi_z_net_composed_block(config, params, normalized_states):
+def phi_net_composed_block(config, params, normalized_states):
     """ 
     Computes a block of the composed "hardening" function using a neural network.
     Args:
@@ -293,7 +335,7 @@ def phi_z_net_composed_block(config, params, normalized_states):
         pos_effect = non_smooth_function(fnn(params.pos, normalized_states, leaky_relu).squeeze())
     return smooth + strength * pos_effect
 
-def phi_z_net_composed(config, params, states, input, norm):
+def phi_net_beam_composed(config, params, states, input, norm):
     """ 
     Computes the composed "hardening" function using a neural network.
     Args:
@@ -309,19 +351,69 @@ def phi_z_net_composed(config, params, states, input, norm):
         normalized_states = input / norm
     else:
         normalized_states = states / norm
-    phi_z_pp = phi_z_net_composed_block(config, params, normalized_states)
-    phi_z_mp = phi_z_net_composed_block(config, params, jnp.concatenate([-1 * normalized_states[0][None], normalized_states[1][None]]))
-    phi_z_mm = phi_z_net_composed_block(config, params, -1 * normalized_states)
-    phi_z_pm = phi_z_net_composed_block(config, params, jnp.concatenate([normalized_states[0][None], -1 * normalized_states[1][None]]))
+    phi_z_pp = phi_net_composed_block(config, params, normalized_states)
+    phi_z_mp = phi_net_composed_block(config, params, jnp.concatenate([-1 * normalized_states[0][None], normalized_states[1][None]]))
+    phi_z_mm = phi_net_composed_block(config, params, -1 * normalized_states)
+    phi_z_pm = phi_net_composed_block(config, params, jnp.concatenate([normalized_states[0][None], -1 * normalized_states[1][None]]))
 
     return (phi_z_pp + phi_z_mp + phi_z_mm + phi_z_pm) / 4
 
-phi_z_net_vmap = vmap(phi_z_net, in_axes=(None, None, 0, 0, None))
-phi_z_net_complex_vmap = vmap(phi_z_net_complex, in_axes=(None, None, 0, 0, None))
-phi_z_net_composed_vmap = vmap(phi_z_net_composed, in_axes=(None, None, 0, 0, None))
-phi_z_net_asym_vmap = vmap(phi_z_net_asym, in_axes=(None, None, 0, 0, None))
+def start_yield_func_shell(config, N, M):
+    """ 
+    Computes the starting yield function for shell systems.
+    Args:
+        config: configuration object.
+        N: axial force.
+        M: bending moment.
+    Returns:
+        The computed starting yield function for shell systems.
+    """
+    f2 = (2 * (N[0]**2 + N[1]**2 - N[0] * N[1]) / 3 + N[2]**2) / config.h**2
+    f2 += (36 * (M[0]**2 + M[1]**2 - M[0] * M[1]) + 54 * M[2]**2) / config.h**4
+    f2 += 6 * jnp.abs(2 * N[0] * M[0] + 2 * N[1] * M[1] - N[0] * M[1] - N[1] * M[0] + 3 * N[2] * M[2]) / config.h**3
+    return jnp.sqrt(f2) / config.sigma_y
 
-def phi_z_func(config, params, states, input, norm):
+def phi_net_shell(config, params, states, input, norm):
+    """ 
+    Computes the "hardening" function for shell systems using a neural network.
+    Args:
+        config: configuration object.
+        params: list of tuples (W, b) where W is the weight matrix and b is the bias vector for each layer.
+        states: current states of the system.
+        input: input to the neural network.
+        norm: normalization factor.
+    Returns:
+        The computed "hardening" function.
+    """
+    if config.input_yield:
+        normalized_states = input / norm
+    else:
+        normalized_states = states / norm
+
+    if config.symmetric and config.input_yield:
+        inpt_1 = jnp.sum(normalized_states[:config.latent_dim//2])
+        inpt_2 = 2 * (normalized_states[0]**2 + normalized_states[1]**2 - normalized_states[0]*normalized_states[1]) / 3 - normalized_states[2]**2
+        inpt_3 = jnp.sum(normalized_states[config.latent_dim//2:config.latent_dim])
+        inpt_4 = 2 * (normalized_states[3]**2 + normalized_states[4]**2 - normalized_states[3]*normalized_states[4]) / 3 - normalized_states[5]**2
+        inpt_array_pp = jnp.array([inpt_1, inpt_2, inpt_3, inpt_4])
+        inpt_array_mm = jnp.array([-1 * inpt_1, inpt_2, -1 * inpt_3, inpt_4])
+        inpt_array_pm = jnp.array([inpt_1, inpt_2, -1 * inpt_3, inpt_4])
+        inpt_array_mp = jnp.array([-1 * inpt_1, inpt_2, inpt_3, inpt_4])
+
+        phi_pp = relu(fnn(params.states, inpt_array_pp, leaky_relu).squeeze())
+        phi_mm = relu(fnn(params.states, inpt_array_mm, leaky_relu).squeeze())
+        phi_pm = relu(fnn(params.states, inpt_array_pm, leaky_relu).squeeze())
+        phi_mp = relu(fnn(params.states, inpt_array_mp, leaky_relu).squeeze())
+        return (phi_pp + phi_mm + phi_pm + phi_mp) / 4
+    elif config.symmetric and not config.input_yield:
+        inpt_1 = 2 * (normalized_states[0]**2 + normalized_states[1]**2 - normalized_states[0]*normalized_states[1]) / 3 - normalized_states[2]**2
+        inpt_2 = 2 * (normalized_states[3]**2 + normalized_states[4]**2 - normalized_states[3]*normalized_states[4]) / 3 - normalized_states[5]**2
+        return relu(fnn(params.states, jnp.array([inpt_1, inpt_2]), leaky_relu).squeeze())
+    else:
+        return relu(fnn(params.states, normalized_states, leaky_relu).squeeze())
+
+
+def phi_func(config, params, states, input, norm):
     """ 
     Computes the "hardening" function using a neural network correcting for the type of training selected in the configuration.
     Args:
@@ -333,20 +425,27 @@ def phi_z_func(config, params, states, input, norm):
     Returns:
         The computed "hardening" function.
     """
-    if config.yield_func_type != "asymp":
-        if config.yield_func_type == "single":
-            phi_z_internal = phi_z_net
-        elif config.yield_func_type == "complex":
-            phi_z_internal = phi_z_net_complex
-        elif config.yield_func_type == "composed":
-            phi_z_internal = phi_z_net_composed
+    if config.system == "beam":
+        if config.yield_func_type != "asymp":
+            if config.yield_func_type == "single":
+                phi_z_internal = phi_net_beam
+            elif config.yield_func_type == "complex":
+                phi_z_internal = phi_net_beam_complex
+            elif config.yield_func_type == "composed":
+                phi_z_internal = phi_net_beam_composed
 
-        if config.yield_log_loss:
-            return jnp.exp(phi_z_internal(config, params, states, input, norm))
+            if config.yield_log_loss:
+                return jnp.exp(phi_z_internal(config, params, states, input, norm))
+            else:
+                return 1 + phi_z_internal(config, params, states, input, norm)
         else:
-            return 1 + phi_z_internal(config, params, states, input, norm)
+            return phi_net_beam_asym(config, params, states, input, norm)
+    elif config.system == "shell":
+        return 1 + phi_net_shell(config, params, states, input, norm)
     else:
-        return phi_z_net_asym(config, params, states, input, norm)
+        raise ValueError(f"Unknown system: {config.system}")
+
+phi_func_vmap = vmap(phi_func, in_axes=(None, None, 0, 0, None))
 
 def yield_function_implicit(config, params, N, M, states, input, norm):
     """ 
@@ -362,7 +461,10 @@ def yield_function_implicit(config, params, N, M, states, input, norm):
     Returns:
         The computed yield function.
     """
-    return jnp.abs(N) / config.N_y + jnp.abs(M) / config.M_y - phi_z_func(config, params, states, input[0:2], norm)
+    if config.system == "beam":
+        return jnp.abs(N) / config.N_y + jnp.abs(M) / config.M_y - phi_func(config, params, states, input[0:2], norm)
+    elif config.system == "shell":
+        return start_yield_func_shell(config, N, M) - phi_func(config, params, states, input[0:2], norm)
 
 def state_dot_implicit(config, params, states, inpt, norm):
     """ Computes the state derivative used in the implicit solver.
@@ -376,7 +478,12 @@ def state_dot_implicit(config, params, states, inpt, norm):
         The computed state derivative.
     """
     normalized_states = states / norm
-    normalized_input = inpt[:2] / norm
+    if config.system == "beam":
+        normalized_input = inpt[:2] / norm
+    elif config.system == "shell":
+        normalized_input = inpt[:6] / norm
+    else:
+        raise ValueError(f"Unknown system: {config.system}")
     inpt_net = jnp.concatenate([normalized_states, normalized_input])
     R_matrix_ph = R_matrix(config, params, inpt_net)
     forces = jnp.diag(jnp.array([config.E * config.A, config.E * config.I])) @ (states - inpt[:2])
@@ -405,8 +512,14 @@ def residual_implicit(z, config, params_R_matrix, params_yield_func, states, inp
     """
     residual_ph = jnp.zeros((states.shape[0] + 1, ))
     residual_ph = residual_ph.at[:-1].set(z[:-1] - states - z[-1] * state_dot_implicit(config, params_R_matrix, z[:-1], inpt, norm))
-    N = config.E * config.A * (inpt[0] - z[0])
-    M = -1 * config.E * config.I * (inpt[1] - z[1])
+    if config.system == "beam":
+        N = config.E * config.A * (inpt[0] - z[0])
+        M = -1 * config.E * config.I * (inpt[1] - z[1])
+    elif config.system == "shell":
+        N = config.E * config.h * (inpt[:3] - z[:3])
+        M = -1 * config.E * config.h**3 * (inpt[3:6] - z[3:6]) / 12
+    else:
+        raise ValueError(f"Unknown system: {config.system}")
     residual_ph = residual_ph.at[-1].set(yield_function_implicit(config, params_yield_func, N, M, z[:-1], inpt, norm))
     return residual_ph
 
@@ -501,23 +614,47 @@ def state_step(config, params_R_matrix, params_yield_func, states, yield_val, in
     Returns:
         The next state, forces, state derivative, Lagrange multiplier, and yield value.
     """
-    N_tr = config.E * config.A * (inpt[0] - states[0])
-    M_tr = -1 * config.E * config.I * (inpt[1] - states[1])
-    Phi_tr = jnp.abs(N_tr) / config.N_y + jnp.abs(M_tr) / config.M_y - yield_val
+    if config.system == "beam":
+        N_tr = config.E * config.A * (inpt[0] - states[0])
+        M_tr = -1 * config.E * config.I * (inpt[1] - states[1])
+        Phi_tr = jnp.abs(N_tr) / config.N_y + jnp.abs(M_tr) / config.M_y - yield_val
+    elif config.system == "shell":
+        N_tr = config.E * config.h * (inpt[:3] - states[:3])
+        M_tr = -1 * config.E * config.h**3 * (inpt[3:6] - states[3:6]) / 12
+        Phi_tr = start_yield_func_shell(config, N_tr, M_tr) - yield_val
+    else:
+        raise ValueError(f"Unknown system: {config.system}")
 
     def true():
-        return states, jnp.array([N_tr, M_tr]), jnp.zeros_like(states), jnp.zeros((1,)), yield_val
+        if config.system == "beam":
+            return states, jnp.array([N_tr, M_tr]), jnp.zeros_like(states), jnp.zeros((1,)), yield_val
+        elif config.system == "shell":
+            return states, jnp.concatenate([N_tr, M_tr]), jnp.zeros_like(states), jnp.zeros((1,)), yield_val
+        else:
+            raise ValueError(f"Unknown system: {config.system}")
 
     def false():
         if config.solver == "implicit_euler":
-            yield_val = phi_z_func(config, params_yield_func, states, inpt[:2], norm)
+            if config.system == "beam":
+                yield_val = phi_func(config, params_yield_func, states, inpt[:2], norm)
+            elif config.system == "shell":
+                yield_val = phi_func(config, params_yield_func, states, inpt[:6], norm)
+            else:
+                raise ValueError(f"Unknown system: {config.system}")
             states_new = state_step_implicit(config, params_R_matrix, params_yield_func, states, inpt, norm)
             states_dot = state_dot_implicit(config, params_R_matrix, states, inpt, norm)
             DLmb = states_new[-1]
-        
-        forces_new = jnp.zeros(2)
-        forces_new = forces_new.at[0].set(config.E * config.A * (inpt[0] - states_new[0]))
-        forces_new = forces_new.at[1].set(-1 * config.E * config.I * (inpt[1] - states_new[1]))
+
+        if config.system == "beam":
+            forces_new = jnp.zeros(2)
+            forces_new = forces_new.at[0].set(config.E * config.A * (inpt[0] - states_new[0]))
+            forces_new = forces_new.at[1].set(-1 * config.E * config.I * (inpt[1] - states_new[1]))
+        elif config.system == "shell":
+            forces_new = jnp.zeros(6)
+            forces_new = forces_new.at[:3].set(config.E * config.h * (inpt[:3] - states_new[:3]))
+            forces_new = forces_new.at[3:6].set(-1 * config.E * config.h**3 * (inpt[3:6] - states_new[3:6]) / 12)
+        else:
+            raise ValueError(f"Unknown system: {config.system}")
 
         return states_new[:-1], forces_new, states_dot, DLmb[None], yield_val
 
