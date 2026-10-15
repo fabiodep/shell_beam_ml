@@ -515,13 +515,32 @@ def loading_inputs(config, input_char, num_steps):
         A tensor containing the loading ramp.
     """
     t = jnp.linspace(0.0, num_steps * config.Dt, num_steps, dtype=config.dtype)
-    angle = jnp.deg2rad(input_char[1])
-    direction = jnp.array([jnp.cos(angle), jnp.sin(angle) / config.h])
-    der_direction = jnp.array([-jnp.sin(angle), jnp.cos(angle)])
+    if config.system == "beam":
+        angle = jnp.deg2rad(input_char[1])
+        direction = jnp.array([jnp.cos(angle), jnp.sin(angle) / config.h])
 
-    inpt = input_char[0] * t[:, None] * direction
-    der_inpt = input_char[0] * jnp.ones_like(t)[:, None] * der_direction
-    return jnp.concatenate([inpt, der_inpt], axis=-1)
+        inpt = input_char[0] * t[:, None] * direction
+        der_inpt = input_char[0] * jnp.ones_like(t)[:, None] * direction
+        return jnp.concatenate([inpt, der_inpt], axis=-1)
+    elif config.system == "shell":
+        gamma = jnp.deg2rad(input_char[1])
+        theta_eps = jnp.deg2rad(input_char[2])
+        phi_eps = jnp.deg2rad(input_char[3])
+        theta_kappa = jnp.deg2rad(input_char[4])
+        phi_kappa = jnp.deg2rad(input_char[5])
+
+        direction = jnp.array([jnp.cos(gamma) * jnp.sin(theta_eps) * jnp.cos(phi_eps),
+                               jnp.cos(gamma) * jnp.sin(theta_eps) * jnp.sin(phi_eps),
+                               jnp.cos(gamma) * jnp.cos(theta_eps),
+                               jnp.sin(gamma) * jnp.sin(theta_kappa) * jnp.cos(phi_kappa),
+                               jnp.sin(gamma) * jnp.sin(theta_kappa) * jnp.sin(phi_kappa),
+                               jnp.sin(gamma) * jnp.cos(theta_kappa)])
+
+        inpt = input_char[0] * t[:, None] * direction
+        der_inpt = input_char[0] * jnp.ones_like(t)[:, None] * direction
+        return jnp.concatenate([inpt, der_inpt], axis=-1)
+    else:
+        raise ValueError(f"Unknown system: {config.system}")
 
 def load_yield_func_dataset(config, split):
     """
@@ -535,19 +554,30 @@ def load_yield_func_dataset(config, split):
 
     import h5py
 
-    if split == "train" and config.dataset == "long":
-        file = "yield_surface_train_l.h5"
-    elif split == "train" and (config.dataset == "all" or config.dataset == "mixed"):
-        file = "yield_surface_train_all.h5"
-    else:
-        file = f"yield_surface_{split}.h5"
-    path = Path(config.data_folder) / file
+    if config.system == "beam":
+        if split == "train" and config.dataset == "long":
+            file = "yield_surface_train_l.h5"
+        elif split == "train" and (config.dataset == "all" or config.dataset == "mixed"):
+            file = "yield_surface_train_all.h5"
+        else:
+            file = f"yield_surface_{split}.h5"
+        path = Path(config.data_folder) / file
 
-    with h5py.File(path, "r") as data_file:
-        data = data_file["yield_surface"]
-        states = np.concatenate([np.asarray(data["epsilon_p_bar"])[:, None], np.asarray(data["kappa_p_bar"])[:, None]], axis=-1)
-        inputs = np.concatenate([np.asarray(data["epsilon_bar"])[:, None], np.asarray(data["kappa_bar"])[:, None]], axis=-1)
-        targets_phi_z = np.asarray(data["phi_z"])
+        with h5py.File(path, "r") as data_file:
+            data = data_file["yield_surface"]
+            states = np.concatenate([np.asarray(data["epsilon_p_bar"])[:, None], np.asarray(data["kappa_p_bar"])[:, None]], axis=-1)
+            inputs = np.concatenate([np.asarray(data["epsilon_bar"])[:, None], np.asarray(data["kappa_bar"])[:, None]], axis=-1)
+            targets_phi_z = np.asarray(data["phi_z"])
+    elif config.system == "shell":
+        file = f"{split}_shell.h5"
+        path = Path(config.data_folder) / file
+
+        with h5py.File(path, "r") as data_file:
+            states = np.reshape(np.asarray(data_file["states"]).T, (-1, config.latent_dim))
+            inputs = np.reshape(np.asarray(data_file["inputs"]).T, (-1, config.input_dim))
+            targets_phi_z = np.reshape(np.asarray(data_file["phi_z"]).T, (-1,))
+    else:
+        raise ValueError(f"Unknown system: {config.system}")
 
     return YieldDictIterator(
         config,
