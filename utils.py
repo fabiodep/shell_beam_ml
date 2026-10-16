@@ -44,10 +44,7 @@ class DictIterator:
         self.targets = np.array(targets, copy=True)
         self.targets[..., 1] *= config.h
         self.states = states
-        if self.split == "train":
-            self.batch_size = config.batch_size
-        else:
-            self.batch_size = config.batch_size_val
+        self.batch_size = config.batch_size_trajectory
         self.length = self.input_chars.shape[0]
         if self.length == 0:
             raise ValueError(f"Empty {split} dataset")
@@ -358,19 +355,26 @@ def init_param_state(config):
         params.J_matrix = init_network_params(config.J_matrix_shape, next(key))
     
     if config.solver == "implicit_euler":
-        if config.yield_func_type != "composed":
+        if config.system == "beam":
+            if config.yield_func_type != "composed":
+                params.yield_func = dot_dict(
+                    states = init_network_params(config.yield_func_states_shape, next(key)),
+                )
+                if config.yield_func_type == "asymp": 
+                    params.yield_func.bias = jnp.array(10.0)
+
+            else:
+                params.yield_func = dot_dict(
+                    smooth = init_network_params(config.yield_func_smooth_shape, next(key)),
+                    pos = init_network_params(config.yield_func_pos_shape, next(key)),
+                    strength = init_network_params(config.yield_func_strength_shape, next(key)),
+                )
+        elif config.system == "shell":
             params.yield_func = dot_dict(
                 states = init_network_params(config.yield_func_states_shape, next(key)),
             )
-            if config.yield_func_type == "asymp": 
-                params.yield_func.bias = jnp.array(10.0)
-
         else:
-            params.yield_func = dot_dict(
-                smooth = init_network_params(config.yield_func_smooth_shape, next(key)),
-                pos = init_network_params(config.yield_func_pos_shape, next(key)),
-                strength = init_network_params(config.yield_func_strength_shape, next(key)),
-            )
+            raise ValueError(f"Unknown system: {config.system}")
 
     return params
 
@@ -574,7 +578,7 @@ def load_yield_func_dataset(config, split):
 
         with h5py.File(path, "r") as data_file:
             states = np.reshape(np.asarray(data_file["states"]).T, (-1, config.latent_dim))
-            inputs = np.reshape(np.asarray(data_file["inputs"]).T, (-1, config.input_dim))
+            inputs = np.reshape(np.asarray(data_file["inputs"]).T, (-1, config.latent_dim))
             targets_phi_z = np.reshape(np.asarray(data_file["phi_z"]).T, (-1,))
     else:
         raise ValueError(f"Unknown system: {config.system}")
@@ -586,3 +590,24 @@ def load_yield_func_dataset(config, split):
         targets_phi_z,
         split = split
     )
+
+def trace(vec):
+    """
+    Computes the trace of a tensor given in Mandel's representation
+    Args:
+        vec: a vector representing the flattened square matrix.
+    Returns:
+        The trace of the matrix represented by the vector.
+    """
+    return jnp.sum(vec[:2])
+
+def dev_dc_dev(vec_1, vec_2):
+    """
+    Computes the double contraction between the deviatoric part of two tensors given in Mandel's representation.
+    Args:
+        vec_1: a vector representing the first tensor.
+        vec_2: a vector representing the second tensor.
+    Returns:
+        The double contraction between the deviatoric parts of the two tensors.
+    """
+    return (2 * vec_1[0] * vec_2[0] + 2 * vec_1[1] * vec_2[1] - vec_1[0] * vec_2[1] - vec_1[1] * vec_2[0]) / 3 + vec_1[2] * vec_2[2]

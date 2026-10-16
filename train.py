@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import jax
 jax.config.update("jax_enable_x64", True)
@@ -714,19 +714,61 @@ def save_loads_plots(config, epoch, split, L2_errors, rel_L2_errors, forces, tar
     for i, input_char in enumerate(input_chars):
         inputs = loading_inputs(config, input_char, targets.shape[1])
 
-        fig, axs = plt.subplots(1, 2, figsize=(8, 8))
-        axs[0].plot(inputs[:,0], targets[i,:,0], label="Target load curve")
-        axs[0].plot(inputs[:,0], forces[i,:,0], label="Predicted load curve")
-        axs[0].set_xlabel("Mid point strain")
-        axs[0].set_ylabel("Normal force [N]")
-        axs[0].grid()
-        axs[0].legend()
-        axs[1].plot(inputs[:,1], targets[i,:,1], label="Target load curve")
-        axs[1].plot(inputs[:,1], forces[i,:,1], label="Predicted load curve")
-        axs[1].set_xlabel("Normalize curvature")
-        axs[1].set_ylabel("Normalized moment [N]")
-        axs[1].grid()
-        axs[1].legend()
+        if config.system == "beam":
+            fig, axs = plt.subplots(1, 2, figsize=(8, 8))
+            axs[0].plot(inputs[:,0], targets[i,:,0], label="Target load curve")
+            axs[0].plot(inputs[:,0], forces[i,:,0], label="Predicted load curve")
+            axs[0].set_xlabel("Mid point strain")
+            axs[0].set_ylabel("Normal force [N]")
+            axs[0].grid()
+            axs[0].legend()
+            axs[1].plot(inputs[:,1], targets[i,:,1], label="Target load curve")
+            axs[1].plot(inputs[:,1], forces[i,:,1], label="Predicted load curve")
+            axs[1].set_xlabel("Normalize curvature")
+            axs[1].set_ylabel("Normalized moment [N]")
+            axs[1].grid()
+            axs[1].legend()
+        elif config.system == "shell":
+            fig, axs = plt.subplots(2, 3, figsize=(8, 8))
+            axs[0].plot(inputs[:,0], targets[i,:,0], label="Target load curve")
+            axs[0].plot(inputs[:,0], forces[i,:,0], label="Predicted load curve")
+            axs[0].set_xlabel(r"$\bar{\varepsilon}_{11}$")
+            axs[0].set_ylabel(r"$N_{11}$ [N/m]")
+            axs[0].grid()
+            axs[0].legend()
+            axs[1].plot(inputs[:,1], targets[i,:,1], label="Target load curve")
+            axs[1].plot(inputs[:,1], forces[i,:,1], label="Predicted load curve")
+            axs[1].set_xlabel(r"$\bar{\varepsilon}_{22}$")
+            axs[1].set_ylabel(r"$N_{22}$ [N/m]")
+            axs[1].grid()
+            axs[1].legend()
+            axs[2].plot(inputs[:,2]/jnp.sqrt(2), targets[i,:,2]/jnp.sqrt(2), label="Target load curve")
+            axs[2].plot(inputs[:,2]/jnp.sqrt(2), forces[i,:,2]/jnp.sqrt(2), label="Predicted load curve")
+            axs[2].set_xlabel(r"$\bar{\varepsilon}_{22}$")
+            axs[2].set_ylabel(r"$N_{22}$ [N/m]")
+            axs[2].grid()
+            axs[2].legend()
+            axs[3].plot(inputs[:,3], targets[i,:,3], label="Target load curve")
+            axs[3].plot(inputs[:,3], forces[i,:,3], label="Predicted load curve")
+            axs[3].set_xlabel(r"$\bar{\kappa}_{11}$")
+            axs[3].set_ylabel(r"$M_{11}$ [N/m]")
+            axs[3].grid()
+            axs[3].legend()
+            axs[4].plot(inputs[:,4], targets[i,:,4], label="Target load curve")
+            axs[4].plot(inputs[:,4], forces[i,:,4], label="Predicted load curve")
+            axs[4].set_xlabel(r"$\bar{\kappa}_{22}$")
+            axs[4].set_ylabel(r"$M_{22}$ [N/m]")
+            axs[4].grid()
+            axs[4].legend()
+            axs[5].plot(inputs[:,5]/jnp.sqrt(2), targets[i,:,5]/jnp.sqrt(2), label="Target load curve")
+            axs[5].plot(inputs[:,5]/jnp.sqrt(2), forces[i,:,5]/jnp.sqrt(2), label="Predicted load curve")
+            axs[5].set_xlabel(r"$\bar{\kappa}_{12}\cdot h_\text{max}$")
+            axs[5].set_ylabel(r"$M_{12}/h_\text{max}$ [N/m]")
+            axs[5].grid()
+            axs[5].legend()
+        else:
+            raise ValueError(f"Unknown system: {config.system}")
+        
         fig.suptitle(f"Angle {input_char[1]} (L2 error: {L2_errors[i]:.4g}, rel L2 error: {rel_L2_errors[i]:.4g})")
         plt.tight_layout()
         plt.savefig(save_path / f"{split}_{i}.pdf")
@@ -742,11 +784,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--num-epochs_yield", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--batch-size_yield", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--num-epochs", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--batch-size", type=int, default=argparse.SUPPRESS)
-    parser.add_argument("--solver", type=str, default=argparse.SUPPRESS)
     parser.add_argument(
         "--resume-from",
         type=Path,
@@ -770,17 +807,6 @@ def main() -> None:
     """
 
     args = parse_args()
-    overrides = {
-        config_name: getattr(args, cli_name)
-        for cli_name, config_name in (
-            ("num_epochs_yield", "num_epochs_yield"),
-            ("batch_size_yield", "batch_size_yield"),
-            ("num_epochs", "num_epochs"),
-            ("batch_size", "batch_size"),
-            ("solver", "solver"),
-        )
-        if hasattr(args, cli_name)
-    }
 
     if args.resume_from is not None and args.stage is None:
         raise ValueError("Must specify --stage when resuming from a checkpoint.")
@@ -799,17 +825,7 @@ def main() -> None:
     elif args.resume_from is not None and args.stage == "all":
         train_loop(resume_from=args.resume_from)
     else:
-        # Preserve the script's historical fresh-training CLI defaults while
-        # still tracking which values were explicitly supplied on resume.
-        fresh_defaults = {
-            "num_epochs_yield": 15000,
-            "batch_size_yield": 10000,
-            "num_epochs": 150000,
-            "batch_size": 30,
-            "solver": "implicit_euler" ,
-        }
-        fresh_defaults.update(overrides)
-        config = Config(**fresh_defaults)
+        config = Config()
         if config.separated_training:
             train_loop_yield_func(config)
             train_loop_state_func(config)

@@ -8,14 +8,14 @@ from typing import Optional, Tuple, get_args, get_origin, get_type_hints
 @jax.tree_util.register_static
 @dataclass(kw_only=True, frozen=True)
 class Config:
-    system: str = "beam" #["beam", "shell"]
+    system: str = "shell" #["beam", "shell"]
 
     # Utlilities
     save_folder: Optional[str] = None
     data_folder: str = "data"
     dataset: str = "long" #["none", "all", "long", "mixed"]
-    eval_interval: int = 10000
-    save_interval: int = 20
+    eval_interval: int = 1000
+    save_interval: int = 100
     safety_eps: float = 1e-8
     seed: int = 0
     prefetch_batches: int = 10
@@ -28,7 +28,7 @@ class Config:
     I: float = b * h**3 / 12
     E: float = 200e3
     sigma_y: float = 250.0
-    norm_state: Tuple[float, float] = (sigma_y / E, sigma_y / E)
+    norm_state: float = sigma_y / E
     N_y: float = sigma_y * A
     M_y: float = sigma_y * (b * h**2 / 6)
 
@@ -58,11 +58,11 @@ class Config:
     newton_line_search_max_iter: int = 10
 
     #Training settings
-    num_epochs_yield: int = 500
+    num_epochs_yield: int = 15000
     batch_size_yield: int = 10000
-    num_epochs: int = 300
-    batch_size: int = 20
-    batch_size_val: int = 100
+    num_epochs: int = 500000
+    batch_size: int = 10000
+    batch_size_trajectory: int = 100
     pretraining: bool = False
     separated_training: bool = True
 
@@ -129,9 +129,9 @@ class Config:
                 save_folder += "_separated"
             if self.pretraining:
                 save_folder += "_pretraining"
-        if self.dataset == "long":
+        if self.dataset == "long" and self.system == "beam":
             save_folder += "_long"
-        elif self.dataset == "all":
+        elif self.dataset == "all" and self.system == "beam":
             save_folder += "_all"
         if self.yield_func_type != "single":
             save_folder += f"_{self.yield_func_type}"
@@ -159,7 +159,7 @@ class Config:
         elif self.diagonal_R and self.system == "shell":
             dim = latent_dim // 2
             if self.symmetric: 
-                R_matrix_shape = (8, 64, 64, dim * (dim + 1))
+                R_matrix_shape = (12, 64, 64, dim * (dim + 1))
             else:
                 R_matrix_shape = (2 * latent_dim, 64, 64, dim * (dim + 1))
         else:
@@ -190,11 +190,14 @@ class Config:
                 set_default("yield_func_strength_shape", yield_func_strength_shape)
         elif self.system == "shell":
             if self.symmetric and self.input_yield:
-                input_yield = 4
+                input_yield = 5
             elif self.symmetric and not self.input_yield:
-                input_yield = 2
+                input_yield = 3
             elif not self.symmetric:
                 input_yield = self.latent_dim
+
+            yield_func_states_shape = (input_yield, 32, 32, 32, 1)
+            set_default("yield_func_states_shape", yield_func_states_shape)
         else:
             raise ValueError(f"Unknown configuration: system={self.system}, symmetric={self.symmetric}")
 

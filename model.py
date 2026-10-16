@@ -5,7 +5,7 @@ from jax.nn import leaky_relu, relu, softplus
 from jax.lax import scan, cond
 from functools import partial
 
-from utils import newton_solve
+from utils import newton_solve, trace, dev_dc_dev
 
 def fnn(params, inpt, activation):
     """
@@ -48,8 +48,8 @@ def R_matrix_block(config, params, inpt, activation):
                 R_matrix_ph_1 = R_matrix_ph_1.at[i, i:].set(out[pos:pos+(config.latent_dim//2-i)])
                 R_matrix_ph_2 = R_matrix_ph_2.at[i, i:].set(out[pos+config.latent_dim//2:pos+(config.latent_dim-i)])
                 pos += config.latent_dim//2 - i
-            R_matrix_ph[:config.latent_dim//2, :config.latent_dim//2] = R_matrix_ph_1
-            R_matrix_ph[config.latent_dim//2:, config.latent_dim//2:] = R_matrix_ph_2
+            R_matrix_ph = R_matrix_ph.at[:config.latent_dim//2, :config.latent_dim//2].set(R_matrix_ph_1)
+            R_matrix_ph = R_matrix_ph.at[config.latent_dim//2:, config.latent_dim//2:].set(R_matrix_ph_2)
     else:
         R_matrix_ph = jnp.zeros((config.latent_dim, config.latent_dim))    
         R_matrix_entries = fnn(params, inpt, activation)
@@ -77,25 +77,24 @@ def R_matrix(config, params, inpt):
         R_matrix_ph = (R_matrix_ph_pp + R_matrix_ph_mm + R_matrix_ph_pm + R_matrix_ph_mp) / 4
         return R_matrix_ph
     elif config.system == "shell" and config.symmetric:
-        inpt_1 = jnp.sum(inpt[config.latent_dim:config.latent_dim+2])
-        inpt_2 = 2 * (inpt[config.latent_dim]**2 + inpt[config.latent_dim+1]**2 - inpt[config.latent_dim]*inpt[config.latent_dim+1]) / 3 - inpt[config.latent_dim+2]**2
-        inpt_3 = 2 * (inpt[0]**2 + inpt[1]**2 - inpt[0]*inpt[1]) / 3 - inpt[2]**2
-        inpt_4 = (2 * inpt[config.latent_dim]*inpt[0] + 2 * inpt[config.latent_dim+1]*inpt[1] - inpt[config.latent_dim]*inpt[1] - inpt[config.latent_dim+1]*inpt[0]) / 3 + inpt[2] * inpt[config.latent_dim+2]
-        inpt_5 = jnp.sum(inpt[config.latent_dim+3:config.latent_dim+5])
-        inpt_6 = 2 * (inpt[config.latent_dim+3]**2 + inpt[config.latent_dim+4]**2 - inpt[config.latent_dim+3]*inpt[config.latent_dim+4]) / 3 - inpt[config.latent_dim+5]**2
-        inpt_7 = 2 * (inpt[3]**2 + inpt[4]**2 - inpt[3]*inpt[4]) / 3 - inpt[5]**2
-        inpt_8 = (2 * inpt[config.latent_dim+3]*inpt[3] + 2 * inpt[config.latent_dim+4]*inpt[4] - inpt[config.latent_dim+3]*inpt[4] - inpt[config.latent_dim+4]*inpt[3]) / 3 + inpt[5] * inpt[config.latent_dim+5]
+        eps_bar = inpt[config.latent_dim:3*config.latent_dim//2]
+        kappa_bar = inpt[3*config.latent_dim//2:]
+        eps_p_bar = inpt[:config.latent_dim//2]
+        kappa_p_bar = inpt[config.latent_dim//2:config.latent_dim]
+        inpt_1 = trace(eps_bar)
+        inpt_2 = trace(kappa_bar)
+        inpt_3 = dev_dc_dev(eps_bar, eps_bar)
+        inpt_4 = dev_dc_dev(kappa_bar, kappa_bar)
+        inpt_5 = dev_dc_dev(eps_p_bar, eps_p_bar)
+        inpt_6 = dev_dc_dev(kappa_p_bar, kappa_p_bar)
+        inpt_7 = dev_dc_dev(eps_bar, eps_p_bar)
+        inpt_8 = dev_dc_dev(kappa_bar, kappa_p_bar)
+        inpt_9 = dev_dc_dev(eps_bar, kappa_bar)
+        inpt_10 = dev_dc_dev(eps_p_bar, kappa_p_bar)
+        inpt_11 = dev_dc_dev(eps_bar, kappa_p_bar)
+        inpt_12 = dev_dc_dev(kappa_bar, eps_p_bar)
 
-        inpt_array_pp = jnp.array([inpt_1, inpt_2, inpt_3, inpt_4, inpt_5, inpt_6, inpt_7, inpt_8])
-        inpt_array_mm = jnp.array([-1 * inpt_1, inpt_2, inpt_3, inpt_4, -1 * inpt_5, inpt_6, inpt_7, inpt_8])
-        inpt_array_pm = jnp.array([inpt_1, inpt_2, inpt_3, inpt_4, -1 * inpt_5, inpt_6, inpt_7, inpt_8])
-        inpt_array_mp = jnp.array([-1 * inpt_1, inpt_2, inpt_3, inpt_4, inpt_5, inpt_6, inpt_7, inpt_8])
-
-        R_pp = R_matrix_block(config, params, inpt_array_pp, leaky_relu)
-        R_mm = R_matrix_block(config, params, inpt_array_mm, leaky_relu)
-        R_pm = R_matrix_block(config, params, inpt_array_pm, leaky_relu)
-        R_mp = R_matrix_block(config, params, inpt_array_mp, leaky_relu)
-        return (R_pp + R_mm + R_pm + R_mp) / 4
+        return R_matrix_block(config, params, jnp.array([inpt_1, inpt_2, inpt_3, inpt_4, inpt_5, inpt_6, inpt_7, inpt_8, inpt_9, inpt_10, inpt_11, inpt_12]), leaky_relu)
     elif not config.symmetric:
         return R_matrix_block(config, params, inpt, leaky_relu)
     else:
@@ -391,24 +390,23 @@ def phi_net_shell(config, params, states, input, norm):
         normalized_states = states / norm
 
     if config.symmetric and config.input_yield:
-        inpt_1 = jnp.sum(normalized_states[:config.latent_dim//2])
-        inpt_2 = 2 * (normalized_states[0]**2 + normalized_states[1]**2 - normalized_states[0]*normalized_states[1]) / 3 - normalized_states[2]**2
-        inpt_3 = jnp.sum(normalized_states[config.latent_dim//2:config.latent_dim])
-        inpt_4 = 2 * (normalized_states[3]**2 + normalized_states[4]**2 - normalized_states[3]*normalized_states[4]) / 3 - normalized_states[5]**2
-        inpt_array_pp = jnp.array([inpt_1, inpt_2, inpt_3, inpt_4])
-        inpt_array_mm = jnp.array([-1 * inpt_1, inpt_2, -1 * inpt_3, inpt_4])
-        inpt_array_pm = jnp.array([inpt_1, inpt_2, -1 * inpt_3, inpt_4])
-        inpt_array_mp = jnp.array([-1 * inpt_1, inpt_2, inpt_3, inpt_4])
+        eps_bar = input[:config.latent_dim//2]
+        kappa_bar = input[config.latent_dim//2:config.latent_dim]
+        inpt_1 = trace(eps_bar)
+        inpt_2 = trace(kappa_bar)
+        inpt_3 = dev_dc_dev(eps_bar, eps_bar)
+        inpt_4 = dev_dc_dev(kappa_bar, kappa_bar)
+        inpt_5 = dev_dc_dev(eps_bar, kappa_bar)
 
-        phi_pp = relu(fnn(params.states, inpt_array_pp, leaky_relu).squeeze())
-        phi_mm = relu(fnn(params.states, inpt_array_mm, leaky_relu).squeeze())
-        phi_pm = relu(fnn(params.states, inpt_array_pm, leaky_relu).squeeze())
-        phi_mp = relu(fnn(params.states, inpt_array_mp, leaky_relu).squeeze())
-        return (phi_pp + phi_mm + phi_pm + phi_mp) / 4
+        return relu(fnn(params.states, jnp.array([inpt_1, inpt_2, inpt_3, inpt_4, inpt_5]), leaky_relu).squeeze())
     elif config.symmetric and not config.input_yield:
-        inpt_1 = 2 * (normalized_states[0]**2 + normalized_states[1]**2 - normalized_states[0]*normalized_states[1]) / 3 - normalized_states[2]**2
-        inpt_2 = 2 * (normalized_states[3]**2 + normalized_states[4]**2 - normalized_states[3]*normalized_states[4]) / 3 - normalized_states[5]**2
-        return relu(fnn(params.states, jnp.array([inpt_1, inpt_2]), leaky_relu).squeeze())
+        eps_p_bar = states[:config.latent_dim//2]
+        kappa_p_bar = states[config.latent_dim//2:config.latent_dim]
+        inpt_1 = dev_dc_dev(eps_p_bar, eps_p_bar)
+        inpt_2 = dev_dc_dev(kappa_p_bar, kappa_p_bar)
+        inpt_3 = dev_dc_dev(eps_p_bar, kappa_p_bar)
+
+        return relu(fnn(params.states, jnp.array([inpt_1, inpt_2, inpt_3]), leaky_relu).squeeze())
     else:
         return relu(fnn(params.states, normalized_states, leaky_relu).squeeze())
 
