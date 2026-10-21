@@ -207,7 +207,7 @@ def train_loop_yield_func(
         mean_val_L2_errors = list(checkpoint.get("mean_val_L2_errors", ()))
         train_yield_func_MSE = list(checkpoint.get("train_yield_func_MSE", ()))
         val_yield_func_MSE = list(checkpoint.get("val_yield_func_MSE", ()))
-        evaluation_epochs = list(checkpoint.get("evaluation_epochs", ()))
+        evaluation_epochs = list(checkpoint.get("evaluation_epochs_yield", ()))
         print(f"Resuming from {resume_from} after epoch {start_epoch-1} ...")
     else:
         start_epoch = 0
@@ -247,7 +247,7 @@ def train_loop_yield_func(
         yield_func_losses.append(float(epoch_loss / sample_count))
 
         evaluate_epoch = epoch == 0 or epoch == config.num_epochs_yield - 1
-        evaluate_epoch |= epoch % config.eval_interval == 0
+        evaluate_epoch |= epoch % config.eval_interval_yield == 0
         if evaluate_epoch:
             train_MSE = eval_yield_func_fn(config, train_state.params, train_dataset, train_state.norm)
             val_MSE = eval_yield_func_fn(config, train_state.params, val_dataset, train_state.norm)
@@ -295,7 +295,7 @@ def train_loop_yield_func(
                 mean_val_L2_errors = mean_val_L2_errors,
                 train_yield_func_MSE = train_yield_func_MSE,
                 val_yield_func_MSE = val_yield_func_MSE,
-                evaluation_epochs = evaluation_epochs
+                evaluation_epochs = []
             )
 
 
@@ -366,7 +366,7 @@ def train_loop_state_func(
         state_func_losses.append(float(epoch_loss / sample_count))
 
         evaluate_epoch = epoch == 0 or epoch == config.num_epochs - 1
-        evaluate_epoch |= epoch % config.eval_interval == 0
+        evaluate_epoch |= epoch % config.eval_interval_state == 0
         if evaluate_epoch:
             train_L2_errors, train_forces, train_targets, train_angles = eval_state_func_fn(config,
                                                                                             train_state.params,
@@ -501,7 +501,7 @@ def train_loop(
         state_func_losses.append(float(epoch_loss / sample_count))
 
         evaluate_epoch = epoch == 0 or epoch == config.num_epochs - 1
-        evaluate_epoch |= epoch % config.eval_interval == 0
+        evaluate_epoch |= epoch % config.eval_interval_state == 0
         if evaluate_epoch:
             train_L2_errors, train_forces, train_targets, train_angles = eval_state_func_fn(config,
                                                                                             train_state.params,
@@ -639,7 +639,6 @@ def save_history_plots(config,
         mean_train_L2_errors: list of mean L2 errors on the training set over evaluation epochs.
         mean_val_L2_errors: list of mean L2 errors on the validation set over evaluation epochs.
     """
-
     save_path = Path(config.save_folder)
 
     plt.figure(figsize=(8,8))
@@ -652,7 +651,7 @@ def save_history_plots(config,
     plt.savefig(save_path / "loss.pdf")
     plt.close()
 
-    fig = plt.figure(figsize=(16, 6))
+    plt.figure(figsize=(16, 6))
     plt.semilogy(evaluation_epochs, mean_train_L2_errors, label="Mean train L2 error")
     plt.semilogy(evaluation_epochs, mean_val_L2_errors, label="Mean validation L2 error")
     plt.xlabel("Training epochs")
@@ -695,7 +694,7 @@ def save_params_variability_plots(config,
     plt.close()
 
 
-def save_loads_plots(config, epoch, split, L2_errors, rel_L2_errors, forces, targets, input_chars):
+def save_loads_plots(config, epoch, split, L2_errors, forces, targets, input_chars):
     """
     Saves the plots of the predicted and target load curves for each input characteristic in the dataset.
     Args:
@@ -716,60 +715,53 @@ def save_loads_plots(config, epoch, split, L2_errors, rel_L2_errors, forces, tar
 
         if config.system == "beam":
             fig, axs = plt.subplots(1, 2, figsize=(8, 8))
+            fig.suptitle(f"Angle {input_char[1]} (L2 error: {L2_errors[i]:.4g})")
             axs[0].plot(inputs[:,0], targets[i,:,0], label="Target load curve")
             axs[0].plot(inputs[:,0], forces[i,:,0], label="Predicted load curve")
             axs[0].set_xlabel("Mid point strain")
             axs[0].set_ylabel("Normal force [N]")
             axs[0].grid()
-            axs[0].legend()
             axs[1].plot(inputs[:,1], targets[i,:,1], label="Target load curve")
             axs[1].plot(inputs[:,1], forces[i,:,1], label="Predicted load curve")
             axs[1].set_xlabel("Normalize curvature")
             axs[1].set_ylabel("Normalized moment [N]")
             axs[1].grid()
-            axs[1].legend()
         elif config.system == "shell":
             fig, axs = plt.subplots(2, 3, figsize=(8, 8))
-            axs[0].plot(inputs[:,0], targets[i,:,0], label="Target load curve")
-            axs[0].plot(inputs[:,0], forces[i,:,0], label="Predicted load curve")
-            axs[0].set_xlabel(r"$\bar{\varepsilon}_{11}$")
-            axs[0].set_ylabel(r"$N_{11}$ [N/m]")
-            axs[0].grid()
-            axs[0].legend()
-            axs[1].plot(inputs[:,1], targets[i,:,1], label="Target load curve")
-            axs[1].plot(inputs[:,1], forces[i,:,1], label="Predicted load curve")
-            axs[1].set_xlabel(r"$\bar{\varepsilon}_{22}$")
-            axs[1].set_ylabel(r"$N_{22}$ [N/m]")
-            axs[1].grid()
-            axs[1].legend()
-            axs[2].plot(inputs[:,2]/jnp.sqrt(2), targets[i,:,2]/jnp.sqrt(2), label="Target load curve")
-            axs[2].plot(inputs[:,2]/jnp.sqrt(2), forces[i,:,2]/jnp.sqrt(2), label="Predicted load curve")
-            axs[2].set_xlabel(r"$\bar{\varepsilon}_{22}$")
-            axs[2].set_ylabel(r"$N_{22}$ [N/m]")
-            axs[2].grid()
-            axs[2].legend()
-            axs[3].plot(inputs[:,3], targets[i,:,3], label="Target load curve")
-            axs[3].plot(inputs[:,3], forces[i,:,3], label="Predicted load curve")
-            axs[3].set_xlabel(r"$\bar{\kappa}_{11}$")
-            axs[3].set_ylabel(r"$M_{11}$ [N/m]")
-            axs[3].grid()
-            axs[3].legend()
-            axs[4].plot(inputs[:,4], targets[i,:,4], label="Target load curve")
-            axs[4].plot(inputs[:,4], forces[i,:,4], label="Predicted load curve")
-            axs[4].set_xlabel(r"$\bar{\kappa}_{22}$")
-            axs[4].set_ylabel(r"$M_{22}$ [N/m]")
-            axs[4].grid()
-            axs[4].legend()
-            axs[5].plot(inputs[:,5]/jnp.sqrt(2), targets[i,:,5]/jnp.sqrt(2), label="Target load curve")
-            axs[5].plot(inputs[:,5]/jnp.sqrt(2), forces[i,:,5]/jnp.sqrt(2), label="Predicted load curve")
-            axs[5].set_xlabel(r"$\bar{\kappa}_{12}\cdot h_\text{max}$")
-            axs[5].set_ylabel(r"$M_{12}/h_\text{max}$ [N/m]")
-            axs[5].grid()
-            axs[5].legend()
+            fig.suptitle(f"{input_char[1]:.2f} {input_char[2]:.2f} {input_char[3]:.2f} {input_char[4]:.2f} {input_char[5]:.2f} (L2 error: {L2_errors[i]:.4g})")
+            axs[0, 0].plot(inputs[:,0], targets[i,:,0], label="Target load curve")
+            axs[0, 0].plot(inputs[:,0], forces[i,:,0], label="Predicted load curve")
+            axs[0, 0].set_xlabel(r"$\bar{\varepsilon}_{11}$")
+            axs[0, 0].set_ylabel(r"$N_{11}$ [N/m]")
+            axs[0, 0].grid()
+            axs[0, 1].plot(inputs[:,1], targets[i,:,1], label="Target load curve")
+            axs[0, 1].plot(inputs[:,1], forces[i,:,1], label="Predicted load curve")
+            axs[0, 1].set_xlabel(r"$\bar{\varepsilon}_{22}$")
+            axs[0, 1].set_ylabel(r"$N_{22}$ [N/m]")
+            axs[0, 1].grid()
+            axs[0, 2].plot(inputs[:,2]/jnp.sqrt(2), targets[i,:,2]/jnp.sqrt(2), label="Target load curve")
+            axs[0, 2].plot(inputs[:,2]/jnp.sqrt(2), forces[i,:,2]/jnp.sqrt(2), label="Predicted load curve")
+            axs[0, 2].set_xlabel(r"$\bar{\varepsilon}_{22}$")
+            axs[0, 2].set_ylabel(r"$N_{22}$ [N/m]")
+            axs[0, 2].grid()
+            axs[1, 0].plot(inputs[:,3], targets[i,:,3], label="Target load curve")
+            axs[1, 0].plot(inputs[:,3], forces[i,:,3], label="Predicted load curve")
+            axs[1, 0].set_xlabel(r"$\bar{\kappa}_{11}$")
+            axs[1, 0].set_ylabel(r"$M_{11}$ [N/m]")
+            axs[1, 0].grid()
+            axs[1, 1].plot(inputs[:,4], targets[i,:,4], label="Target load curve")
+            axs[1, 1].plot(inputs[:,4], forces[i,:,4], label="Predicted load curve")
+            axs[1, 1].set_xlabel(r"$\bar{\kappa}_{22}$")
+            axs[1, 1].set_ylabel(r"$M_{22}$ [N/m]")
+            axs[1, 1].grid()
+            axs[1, 2].plot(inputs[:,5]/jnp.sqrt(2), targets[i,:,5]/jnp.sqrt(2), label="Target load curve")
+            axs[1, 2].plot(inputs[:,5]/jnp.sqrt(2), forces[i,:,5]/jnp.sqrt(2), label="Predicted load curve")
+            axs[1, 2].set_xlabel(r"$\bar{\kappa}_{12}\cdot h_\text{max}$")
+            axs[1, 2].set_ylabel(r"$M_{12}/h_\text{max}$ [N/m]")
+            axs[1, 2].grid()
         else:
             raise ValueError(f"Unknown system: {config.system}")
         
-        fig.suptitle(f"Angle {input_char[1]} (L2 error: {L2_errors[i]:.4g}, rel L2 error: {rel_L2_errors[i]:.4g})")
         plt.tight_layout()
         plt.savefig(save_path / f"{split}_{i}.pdf")
         plt.close()

@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 
 from jax import jit, vmap, custom_vjp, jacfwd, vjp
@@ -5,7 +6,7 @@ from jax.nn import leaky_relu, relu, softplus
 from jax.lax import scan, cond
 from functools import partial
 
-from utils import newton_solve, trace, dev_dc_dev
+from utils import newton_solve, trace, no_dev_dc_no_dev, no_dev_dc_dev, dev_dc_dev
 
 def fnn(params, inpt, activation):
     """
@@ -83,18 +84,23 @@ def R_matrix(config, params, inpt):
         kappa_p_bar = inpt[config.latent_dim//2:config.latent_dim]
         inpt_1 = trace(eps_bar)
         inpt_2 = trace(kappa_bar)
-        inpt_3 = dev_dc_dev(eps_bar, eps_bar)
-        inpt_4 = dev_dc_dev(kappa_bar, kappa_bar)
+        inpt_3 = no_dev_dc_no_dev(eps_bar, eps_bar)
+        inpt_4 = no_dev_dc_no_dev(kappa_bar, kappa_bar)
         inpt_5 = dev_dc_dev(eps_p_bar, eps_p_bar)
         inpt_6 = dev_dc_dev(kappa_p_bar, kappa_p_bar)
-        inpt_7 = dev_dc_dev(eps_bar, eps_p_bar)
-        inpt_8 = dev_dc_dev(kappa_bar, kappa_p_bar)
-        inpt_9 = dev_dc_dev(eps_bar, kappa_bar)
+        inpt_7 = no_dev_dc_dev(eps_bar, eps_p_bar)
+        inpt_8 = no_dev_dc_dev(kappa_bar, kappa_p_bar)
+        inpt_9 = no_dev_dc_no_dev(eps_bar, kappa_bar)
         inpt_10 = dev_dc_dev(eps_p_bar, kappa_p_bar)
-        inpt_11 = dev_dc_dev(eps_bar, kappa_p_bar)
-        inpt_12 = dev_dc_dev(kappa_bar, eps_p_bar)
+        inpt_11 = no_dev_dc_dev(eps_bar, kappa_p_bar)
+        inpt_12 = no_dev_dc_dev(kappa_bar, eps_p_bar)
 
-        return R_matrix_block(config, params, jnp.array([inpt_1, inpt_2, inpt_3, inpt_4, inpt_5, inpt_6, inpt_7, inpt_8, inpt_9, inpt_10, inpt_11, inpt_12]), leaky_relu)
+        R_matrix_pp = R_matrix_block(config, params, jnp.array([inpt_1, inpt_2, inpt_3, inpt_4, inpt_5, inpt_6, inpt_7, inpt_8, inpt_9, inpt_10, inpt_11, inpt_12]), leaky_relu)
+        R_matrix_pm = R_matrix_block(config, params, jnp.array([inpt_1, -1 * inpt_2, inpt_3, inpt_4, inpt_5, inpt_6, inpt_7, inpt_8, -1 * inpt_9, -1 * inpt_10, -1 * inpt_11, -1 * inpt_12]), leaky_relu)
+        R_matrix_mp = R_matrix_block(config, params, jnp.array([-1 * inpt_1, inpt_2, inpt_3, inpt_4, inpt_5, inpt_6, inpt_7, inpt_8, -1 * inpt_9, -1 * inpt_10, -1 * inpt_11, -1 * inpt_12]), leaky_relu)
+        R_matrix_mm = R_matrix_block(config, params, jnp.array([-1 * inpt_1, -1 * inpt_2, inpt_3, inpt_4, inpt_5, inpt_6, inpt_7, inpt_8, inpt_9, inpt_10, inpt_11, inpt_12]), leaky_relu)
+
+        return (R_matrix_pp + R_matrix_pm + R_matrix_mp + R_matrix_mm) / 4
     elif not config.symmetric:
         return R_matrix_block(config, params, inpt, leaky_relu)
     else:
@@ -394,11 +400,16 @@ def phi_net_shell(config, params, states, input, norm):
         kappa_bar = input[config.latent_dim//2:config.latent_dim]
         inpt_1 = trace(eps_bar)
         inpt_2 = trace(kappa_bar)
-        inpt_3 = dev_dc_dev(eps_bar, eps_bar)
-        inpt_4 = dev_dc_dev(kappa_bar, kappa_bar)
-        inpt_5 = dev_dc_dev(eps_bar, kappa_bar)
+        inpt_3 = no_dev_dc_no_dev(eps_bar, eps_bar)
+        inpt_4 = no_dev_dc_no_dev(kappa_bar, kappa_bar)
+        inpt_5 = no_dev_dc_no_dev(eps_bar, kappa_bar)
 
-        return relu(fnn(params.states, jnp.array([inpt_1, inpt_2, inpt_3, inpt_4, inpt_5]), leaky_relu).squeeze())
+        phi_pp = relu(fnn(params.states, jnp.array([inpt_1, inpt_2, inpt_3, inpt_4, inpt_5]), leaky_relu).squeeze())
+        phi_pm = relu(fnn(params.states, jnp.array([inpt_1, -1 * inpt_2, inpt_3, inpt_4, -1 * inpt_5]), leaky_relu).squeeze())
+        phi_mp = relu(fnn(params.states, jnp.array([-1 * inpt_1, inpt_2, inpt_3, inpt_4, -1 * inpt_5]), leaky_relu).squeeze())
+        phi_mm = relu(fnn(params.states, jnp.array([-1 * inpt_1, -1 * inpt_2, inpt_3, inpt_4, inpt_5]), leaky_relu).squeeze())
+
+        return (phi_pp + phi_pm + phi_mp + phi_mm) / 4
     elif config.symmetric and not config.input_yield:
         eps_p_bar = states[:config.latent_dim//2]
         kappa_p_bar = states[config.latent_dim//2:config.latent_dim]
@@ -406,7 +417,10 @@ def phi_net_shell(config, params, states, input, norm):
         inpt_2 = dev_dc_dev(kappa_p_bar, kappa_p_bar)
         inpt_3 = dev_dc_dev(eps_p_bar, kappa_p_bar)
 
-        return relu(fnn(params.states, jnp.array([inpt_1, inpt_2, inpt_3]), leaky_relu).squeeze())
+        phi_p = relu(fnn(params.states, jnp.array([inpt_1, inpt_2, inpt_3]), leaky_relu).squeeze())
+        phi_m = relu(fnn(params.states, jnp.array([inpt_1, inpt_2, -1 * inpt_3]), leaky_relu).squeeze())
+
+        return (phi_p + phi_m) / 2
     else:
         return relu(fnn(params.states, normalized_states, leaky_relu).squeeze())
 
@@ -462,7 +476,7 @@ def yield_function_implicit(config, params, N, M, states, input, norm):
     if config.system == "beam":
         return jnp.abs(N) / config.N_y + jnp.abs(M) / config.M_y - phi_func(config, params, states, input[0:2], norm)
     elif config.system == "shell":
-        return start_yield_func_shell(config, N, M) - phi_func(config, params, states, input[0:2], norm)
+        return start_yield_func_shell(config, N, M) - phi_func(config, params, states, input[0:6], norm)
 
 def state_dot_implicit(config, params, states, inpt, norm):
     """ Computes the state derivative used in the implicit solver.
@@ -478,13 +492,16 @@ def state_dot_implicit(config, params, states, inpt, norm):
     normalized_states = states / norm
     if config.system == "beam":
         normalized_input = inpt[:2] / norm
+        forces = jnp.diag(jnp.array([config.E * config.A, config.E * config.I])) @ (states - inpt[:2])
     elif config.system == "shell":
         normalized_input = inpt[:6] / norm
+        forces_N = jnp.array(config.E_mandel) @ (states[:3] - inpt[:3]) * config.h
+        forces_M = jnp.array(config.E_mandel) @ (states[3:6] - inpt[3:6]) * config.h**3 / 12
+        forces = jnp.concatenate([forces_N, forces_M]) 
     else:
         raise ValueError(f"Unknown system: {config.system}")
     inpt_net = jnp.concatenate([normalized_states, normalized_input])
     R_matrix_ph = R_matrix(config, params, inpt_net)
-    forces = jnp.diag(jnp.array([config.E * config.A, config.E * config.I])) @ (states - inpt[:2])
     if config.conservative_term:
         J_matrix_ph = J_matrix(config, params, inpt_net)
         state_dot_ph = - (J_matrix_ph + R_matrix_ph) @ forces / jnp.linalg.norm(forces)
@@ -514,8 +531,8 @@ def residual_implicit(z, config, params_R_matrix, params_yield_func, states, inp
         N = config.E * config.A * (inpt[0] - z[0])
         M = -1 * config.E * config.I * (inpt[1] - z[1])
     elif config.system == "shell":
-        N = config.E * config.h * (inpt[:3] - z[:3])
-        M = -1 * config.E * config.h**3 * (inpt[3:6] - z[3:6]) / 12
+        N = jnp.array(config.E_mandel) @ (inpt[:3] - z[:3]) * config.h
+        M = -1 * jnp.array(config.E_mandel) @ (inpt[3:6] - z[3:6]) * config.h**3 / 12
     else:
         raise ValueError(f"Unknown system: {config.system}")
     residual_ph = residual_ph.at[-1].set(yield_function_implicit(config, params_yield_func, N, M, z[:-1], inpt, norm))
@@ -616,9 +633,10 @@ def state_step(config, params_R_matrix, params_yield_func, states, yield_val, in
         N_tr = config.E * config.A * (inpt[0] - states[0])
         M_tr = -1 * config.E * config.I * (inpt[1] - states[1])
         Phi_tr = jnp.abs(N_tr) / config.N_y + jnp.abs(M_tr) / config.M_y - yield_val
+        #jax.debug.breakpoint(num_frames=1)
     elif config.system == "shell":
-        N_tr = config.E * config.h * (inpt[:3] - states[:3])
-        M_tr = -1 * config.E * config.h**3 * (inpt[3:6] - states[3:6]) / 12
+        N_tr = jnp.array(config.E_mandel) @ (inpt[:3] - states[:3]) * config.h
+        M_tr = -1 * jnp.array(config.E_mandel) @ (inpt[3:6] - states[3:6]) * config.h**3 / 12
         Phi_tr = start_yield_func_shell(config, N_tr, M_tr) - yield_val
     else:
         raise ValueError(f"Unknown system: {config.system}")
@@ -649,8 +667,8 @@ def state_step(config, params_R_matrix, params_yield_func, states, yield_val, in
             forces_new = forces_new.at[1].set(-1 * config.E * config.I * (inpt[1] - states_new[1]))
         elif config.system == "shell":
             forces_new = jnp.zeros(6)
-            forces_new = forces_new.at[:3].set(config.E * config.h * (inpt[:3] - states_new[:3]))
-            forces_new = forces_new.at[3:6].set(-1 * config.E * config.h**3 * (inpt[3:6] - states_new[3:6]) / 12)
+            forces_new = forces_new.at[:3].set(jnp.array(config.E_mandel) @ (inpt[:3] - states[:3]) * config.h)
+            forces_new = forces_new.at[3:6].set(-1 * jnp.array(config.E_mandel) @ (inpt[3:6] - states_new[3:6]) * config.h**3 / 12)
         else:
             raise ValueError(f"Unknown system: {config.system}")
 

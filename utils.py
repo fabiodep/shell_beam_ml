@@ -483,13 +483,17 @@ def load_dataset(config, split):
     """
 
     import h5py
-
-    if split == "train" and (config.dataset == "long" or config.dataset == "mixed"):
-        file = "train_l.h5"
-    elif split == "train" and config.dataset == "all":
-        file = "train_all.h5"
+    if config.system == "beam":
+        if split == "train" and (config.beam_dataset == "long" or config.beam_dataset == "mixed"):
+            file = "train_l.h5"
+        elif split == "train" and config.beam_dataset == "all":
+            file = "train_all.h5"
+        else:
+            file = f"{split}.h5"
+    elif config.system == "shell":
+        file = f"{split}_shell_{config.shell_data_quantity}.h5"
     else:
-        file = f"{split}.h5"
+        raise ValueError(f"Unknown system: {config.system}")
     path = Path(config.data_folder) / file
 
     with h5py.File(path, "r") as data_file:
@@ -559,9 +563,9 @@ def load_yield_func_dataset(config, split):
     import h5py
 
     if config.system == "beam":
-        if split == "train" and config.dataset == "long":
+        if split == "train" and config.beam_dataset == "long":
             file = "yield_surface_train_l.h5"
-        elif split == "train" and (config.dataset == "all" or config.dataset == "mixed"):
+        elif split == "train" and (config.beam_dataset == "all" or config.beam_dataset == "mixed"):
             file = "yield_surface_train_all.h5"
         else:
             file = f"yield_surface_{split}.h5"
@@ -573,7 +577,7 @@ def load_yield_func_dataset(config, split):
             inputs = np.concatenate([np.asarray(data["epsilon_bar"])[:, None], np.asarray(data["kappa_bar"])[:, None]], axis=-1)
             targets_phi_z = np.asarray(data["phi_z"])
     elif config.system == "shell":
-        file = f"{split}_shell.h5"
+        file = f"{split}_shell_{config.shell_data_quantity}.h5"
         path = Path(config.data_folder) / file
 
         with h5py.File(path, "r") as data_file:
@@ -601,7 +605,7 @@ def trace(vec):
     """
     return jnp.sum(vec[:2])
 
-def dev_dc_dev(vec_1, vec_2):
+def no_dev_dc_no_dev(vec_1, vec_2):
     """
     Computes the double contraction between the deviatoric part of two tensors given in Mandel's representation.
     Args:
@@ -611,3 +615,25 @@ def dev_dc_dev(vec_1, vec_2):
         The double contraction between the deviatoric parts of the two tensors.
     """
     return (2 * vec_1[0] * vec_2[0] + 2 * vec_1[1] * vec_2[1] - vec_1[0] * vec_2[1] - vec_1[1] * vec_2[0]) / 3 + vec_1[2] * vec_2[2]
+
+def no_dev_dc_dev(vec_1, vec_2):
+    """
+    Computes the double contraction between the deviatoric part of two tensors given in Mandel's representation when the second one is deviatoric with off-plane component.
+    Args:
+        vec_1: a vector representing the first tensor.
+        vec_2: a vector representing the second tensor.
+    Returns:
+        The double contraction between the deviatoric parts of the two tensors.
+    """
+    return vec_1[0] * vec_2[0] + vec_1[1] * vec_2[1] + vec_1[2] * vec_2[2]
+
+def dev_dc_dev(vec_1, vec_2):
+    """
+    Computes the double contraction between the deviatoric part of two tensors given in Mandel's representation when the both are deviatoric with off-plane component.
+    Args:
+        vec_1: a vector representing the first tensor.
+        vec_2: a vector representing the second tensor.
+    Returns:
+        The double contraction between the deviatoric parts of the two tensors.
+    """
+    return 2 * vec_1[0] * vec_2[0] + 2 * vec_1[1] * vec_2[1] + vec_1[2] * vec_2[2] + vec_1[0] * vec_2[1] + vec_1[1] * vec_2[0]

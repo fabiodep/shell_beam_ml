@@ -13,8 +13,10 @@ class Config:
     # Utlilities
     save_folder: Optional[str] = None
     data_folder: str = "data"
-    dataset: str = "long" #["none", "all", "long", "mixed"]
-    eval_interval: int = 1000
+    beam_dataset: str = "long" #["none", "all", "long", "mixed"]
+    shell_data_quantity: int = 250
+    eval_interval_yield: int = 1000
+    eval_interval_state: int = 10000
     save_interval: int = 100
     safety_eps: float = 1e-8
     seed: int = 0
@@ -27,6 +29,8 @@ class Config:
     A: float = b * h
     I: float = b * h**3 / 12
     E: float = 200e3
+    nu: float = 0.3
+    E_mandel: Tuple[Tuple[float, float, float], Tuple[float, float, float], Tuple[float, float, float]] = ((E / (1 - nu**2), nu * E / (1 - nu**2), 0.0), (nu * E / (1 - nu**2), E / (1 - nu**2), 0.0), (0.0, 0.0, E / (1 * (1 + nu))))
     sigma_y: float = 250.0
     norm_state: float = sigma_y / E
     N_y: float = sigma_y * A
@@ -41,8 +45,8 @@ class Config:
     #Scheduler
     lr_decay_steps: int = 10
     lr_decay_rate: float = 1.0
-    learning_rate_initial_yield: float = 5e-4
-    learning_rate_initial: float = 5e-5
+    learning_rate_initial_yield: float = 1e-4
+    learning_rate_initial: float = 1e-4
     learning_rate_low: float = 1e-4
     high_and_low_lr: bool = False
     high_steps: int = 500
@@ -58,7 +62,7 @@ class Config:
     newton_line_search_max_iter: int = 10
 
     #Training settings
-    num_epochs_yield: int = 15000
+    num_epochs_yield: int = 25000
     batch_size_yield: int = 10000
     num_epochs: int = 500000
     batch_size: int = 10000
@@ -106,7 +110,7 @@ class Config:
 
         if self.solver not in ("implicit_euler", "explicit_euler"):
             raise ValueError(f"Unknown solver: {self.solver}")
-        for name in ("num_epochs", "batch_size", "eval_interval", "save_interval", "lr_decay_steps", "prefetch_batches"):
+        for name in ("num_epochs", "batch_size", "eval_interval_yield", "eval_interval_state", "save_interval", "lr_decay_steps", "prefetch_batches"):
             if getattr(self, name) < 1:
                 raise ValueError(f"{name} must be positive")
         save_folder = f"models/{self.system}_{self.solver}"
@@ -129,9 +133,9 @@ class Config:
                 save_folder += "_separated"
             if self.pretraining:
                 save_folder += "_pretraining"
-        if self.dataset == "long" and self.system == "beam":
+        if self.beam_dataset == "long" and self.system == "beam":
             save_folder += "_long"
-        elif self.dataset == "all" and self.system == "beam":
+        elif self.beam_dataset == "all" and self.system == "beam":
             save_folder += "_all"
         if self.yield_func_type != "single":
             save_folder += f"_{self.yield_func_type}"
@@ -145,6 +149,8 @@ class Config:
             save_folder += f"_{self.features_type}"
         if self.yield_params_dumping:
             save_folder += f"_dmp{self.yield_params_dumping_factor}"
+        if self.system == "shell":
+            save_folder += f"_{self.shell_data_quantity}"
         set_default("save_folder", save_folder)
         
         if self.system == "beam":
@@ -201,6 +207,12 @@ class Config:
         else:
             raise ValueError(f"Unknown configuration: system={self.system}, symmetric={self.symmetric}")
 
+        # YAML represents even nested tuples as lists (for example E_mandel).
+        def nested_tuple(value):
+            if isinstance(value, (list, tuple)):
+                return tuple(nested_tuple(element) for element in value)
+            return value
+
         # Normalize sequence inputs so the frozen configuration stays hashable.
         type_hints = get_type_hints(type(self))
         for item in fields(self):
@@ -210,7 +222,7 @@ class Config:
                 get_origin(hint) is tuple
                 or any(get_origin(arg) is tuple for arg in get_args(hint))
             ):
-                object.__setattr__(self, item.name, tuple(value))
+                object.__setattr__(self, item.name, nested_tuple(value))
         object.__setattr__(self, "save_folder", str(self.save_folder))
 
         save_path = Path(self.save_folder)
