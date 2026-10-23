@@ -14,7 +14,7 @@ class Config:
     save_folder: Optional[str] = None
     data_folder: str = "data"
     beam_dataset: str = "long" #["none", "all", "long", "mixed"]
-    shell_data_quantity: int = 250
+    shell_data_quantity: int = 100
     eval_interval_yield: int = 1000
     eval_interval_state: int = 10000
     save_interval: int = 100
@@ -45,7 +45,7 @@ class Config:
     #Scheduler
     lr_decay_steps: int = 10
     lr_decay_rate: float = 1.0
-    learning_rate_initial_yield: float = 1e-4
+    learning_rate_initial_yield: float = 2e-4
     learning_rate_initial: float = 1e-4
     learning_rate_low: float = 1e-4
     high_and_low_lr: bool = False
@@ -62,7 +62,7 @@ class Config:
     newton_line_search_max_iter: int = 10
 
     #Training settings
-    num_epochs_yield: int = 25000
+    num_epochs_yield: int = 40000
     batch_size_yield: int = 10000
     num_epochs: int = 500000
     batch_size: int = 10000
@@ -163,7 +163,7 @@ class Config:
         if self.diagonal_R and self.system == "beam":
             R_matrix_shape = (2 * latent_dim, 64, 64, latent_dim)
         elif self.diagonal_R and self.system == "shell":
-            dim = latent_dim // 2
+            dim = 4
             if self.symmetric: 
                 R_matrix_shape = (12, 64, 64, dim * (dim + 1))
             else:

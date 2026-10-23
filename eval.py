@@ -48,7 +48,7 @@ def eval_state_func_fn(config, params, dataset, norm):
         targets: target values for each batch in the dataset.
         input_chars: input characteristics for each batch in the dataset.
     """
-    dataset.reset(shuffle=False)
+    dataset.reset(shuffle=True)
     L2_errors = []
     forces = []
     targets = []
@@ -59,6 +59,8 @@ def eval_state_func_fn(config, params, dataset, norm):
         forces.append(forces_batch)
         targets.append(batch["targets"])
         input_chars.append(batch["input_chars"])
+
+        break
 
     return (
         jnp.concatenate(L2_errors),

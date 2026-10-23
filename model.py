@@ -41,16 +41,44 @@ def R_matrix_block(config, params, inpt, activation):
             R_matrix_ph = jnp.diag(fnn(params, inpt, activation).squeeze())
         elif config.system == "shell":
             R_matrix_ph = jnp.zeros((config.latent_dim, config.latent_dim))
-            R_matrix_ph_1 = jnp.zeros((config.latent_dim//2, config.latent_dim//2))
-            R_matrix_ph_2 = jnp.zeros((config.latent_dim//2, config.latent_dim//2))
-            out = fnn(params, inpt, activation).squeeze()
+
+            eps_bar = inpt[config.latent_dim:3*config.latent_dim//2]
+            kappa_bar = inpt[3*config.latent_dim//2:]
+            eps_p_bar = inpt[:config.latent_dim//2]
+            kappa_p_bar = inpt[config.latent_dim//2:config.latent_dim]
+
+            inpt_1 = trace(eps_bar)
+            inpt_2 = trace(kappa_bar)
+            inpt_3 = no_dev_dc_no_dev(eps_bar, eps_bar)
+            inpt_4 = no_dev_dc_no_dev(kappa_bar, kappa_bar)
+            inpt_5 = dev_dc_dev(eps_p_bar, eps_p_bar)
+            inpt_6 = dev_dc_dev(kappa_p_bar, kappa_p_bar)
+            inpt_7 = no_dev_dc_no_dev(eps_bar, kappa_bar)
+            inpt_8 = no_dev_dc_dev(eps_bar, eps_p_bar)
+            inpt_9 = no_dev_dc_dev(eps_bar, kappa_p_bar)
+            inpt_10 = no_dev_dc_dev(kappa_bar, eps_p_bar)
+            inpt_11 = no_dev_dc_dev(kappa_bar, kappa_p_bar)
+            inpt_12 = dev_dc_dev(eps_p_bar, kappa_p_bar)
+
+            inpt_nn = jnp.array([inpt_1, inpt_2, inpt_3, inpt_4, inpt_5, inpt_6, inpt_7, inpt_8, inpt_9, inpt_10, inpt_11, inpt_12])
+            out = softplus(fnn(params, inpt_nn, activation).squeeze())
+
+            dim = 4
+            L_matrix_ph_eps = jnp.zeros((dim, dim))
+            L_matrix_ph_kappa = jnp.zeros((dim, dim))
+
             pos = 0
-            for i in range(config.latent_dim//2):
-                R_matrix_ph_1 = R_matrix_ph_1.at[i, i:].set(out[pos:pos+(config.latent_dim//2-i)])
-                R_matrix_ph_2 = R_matrix_ph_2.at[i, i:].set(out[pos+config.latent_dim//2:pos+(config.latent_dim-i)])
-                pos += config.latent_dim//2 - i
-            R_matrix_ph = R_matrix_ph.at[:config.latent_dim//2, :config.latent_dim//2].set(R_matrix_ph_1)
-            R_matrix_ph = R_matrix_ph.at[config.latent_dim//2:, config.latent_dim//2:].set(R_matrix_ph_2)
+            for i in range(dim):
+                L_matrix_ph_eps = L_matrix_ph_eps.at[i, i:].set(out[pos:pos+(dim-i)])
+                L_matrix_ph_kappa = L_matrix_ph_kappa.at[i, i:].set(out[pos+dim:pos+(dim-i)+dim])
+                pos += dim - i
+
+            eps_bar_dev = eps_bar - jnp.array([inpt_1 / 3, inpt_1 / 3, 0])
+            kappa_bar_dev = kappa_bar - jnp.array([inpt_2 / 3, inpt_2 / 3, 0])
+            basis = jnp.concatenate([eps_bar_dev[:, None], kappa_bar_dev[:, None], eps_p_bar[:, None], kappa_p_bar[:, None]], axis=1)
+
+            R_matrix_ph = R_matrix_ph.at[:config.latent_dim//2, :config.latent_dim//2].set(basis @ L_matrix_ph_eps @ L_matrix_ph_eps.T @ basis.T)
+            R_matrix_ph = R_matrix_ph.at[config.latent_dim//2:, config.latent_dim//2:].set(basis @ L_matrix_ph_kappa @ L_matrix_ph_kappa.T @ basis.T)
     else:
         R_matrix_ph = jnp.zeros((config.latent_dim, config.latent_dim))    
         R_matrix_entries = fnn(params, inpt, activation)
@@ -82,23 +110,11 @@ def R_matrix(config, params, inpt):
         kappa_bar = inpt[3*config.latent_dim//2:]
         eps_p_bar = inpt[:config.latent_dim//2]
         kappa_p_bar = inpt[config.latent_dim//2:config.latent_dim]
-        inpt_1 = trace(eps_bar)
-        inpt_2 = trace(kappa_bar)
-        inpt_3 = no_dev_dc_no_dev(eps_bar, eps_bar)
-        inpt_4 = no_dev_dc_no_dev(kappa_bar, kappa_bar)
-        inpt_5 = dev_dc_dev(eps_p_bar, eps_p_bar)
-        inpt_6 = dev_dc_dev(kappa_p_bar, kappa_p_bar)
-        inpt_7 = no_dev_dc_dev(eps_bar, eps_p_bar)
-        inpt_8 = no_dev_dc_dev(kappa_bar, kappa_p_bar)
-        inpt_9 = no_dev_dc_no_dev(eps_bar, kappa_bar)
-        inpt_10 = dev_dc_dev(eps_p_bar, kappa_p_bar)
-        inpt_11 = no_dev_dc_dev(eps_bar, kappa_p_bar)
-        inpt_12 = no_dev_dc_dev(kappa_bar, eps_p_bar)
 
-        R_matrix_pp = R_matrix_block(config, params, jnp.array([inpt_1, inpt_2, inpt_3, inpt_4, inpt_5, inpt_6, inpt_7, inpt_8, inpt_9, inpt_10, inpt_11, inpt_12]), leaky_relu)
-        R_matrix_pm = R_matrix_block(config, params, jnp.array([inpt_1, -1 * inpt_2, inpt_3, inpt_4, inpt_5, inpt_6, inpt_7, inpt_8, -1 * inpt_9, -1 * inpt_10, -1 * inpt_11, -1 * inpt_12]), leaky_relu)
-        R_matrix_mp = R_matrix_block(config, params, jnp.array([-1 * inpt_1, inpt_2, inpt_3, inpt_4, inpt_5, inpt_6, inpt_7, inpt_8, -1 * inpt_9, -1 * inpt_10, -1 * inpt_11, -1 * inpt_12]), leaky_relu)
-        R_matrix_mm = R_matrix_block(config, params, jnp.array([-1 * inpt_1, -1 * inpt_2, inpt_3, inpt_4, inpt_5, inpt_6, inpt_7, inpt_8, inpt_9, inpt_10, inpt_11, inpt_12]), leaky_relu)
+        R_matrix_pp = R_matrix_block(config, params, inpt, leaky_relu)
+        R_matrix_pm = R_matrix_block(config, params, jnp.concatenate([eps_bar, -1 * kappa_bar, eps_p_bar, -1 * kappa_p_bar]), leaky_relu)
+        R_matrix_mp = R_matrix_block(config, params, jnp.concatenate([-1 * eps_bar, kappa_bar, -1 * eps_p_bar, kappa_p_bar]), leaky_relu)
+        R_matrix_mm = R_matrix_block(config, params, -1 * inpt, leaky_relu)
 
         return (R_matrix_pp + R_matrix_pm + R_matrix_mp + R_matrix_mm) / 4
     elif not config.symmetric:
